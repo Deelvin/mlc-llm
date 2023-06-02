@@ -11,7 +11,7 @@ from tvm import relax
 
 import mlc_llm
 from mlc_llm import utils
-from mlc_llm.relax_model import gpt_neox, llama, moss
+from mlc_llm.relax_model import gpt_neox, llama, moss, t5
 
 
 def _parse_args():
@@ -363,6 +363,8 @@ def main():
                 mod, params = gpt_neox.get_model(ARGS, config)
             elif ARGS.model_category == "moss":
                 mod, params = moss.get_model(ARGS, config)
+            elif ARGS.model_category == "t5":
+                mod, params = t5.get_model(ARGS, config)
             else:
                 raise ValueError(f"Model {ARGS.model} not supported")
             mod = mod_transform_before_build(mod, params, ARGS)
