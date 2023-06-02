@@ -222,7 +222,7 @@ class T5Attention(nn.Module):
 
     def compute_bias(self, query_length, key_length, device=None):
         """Compute binned relative position bias"""
-        from tvm.relax.op import astype, broadcast_to, permute_dims, expand_dims
+        from tvm.relax.op import permute_dims, expand_dims, reshape
         
         # emulates torch.arange behaviour
         def arange(len):
@@ -232,8 +232,8 @@ class T5Attention(nn.Module):
                 name="arange",
                 )
         
-        context_position = nn.emit(broadcast_to(nn.emit_te(arange, query_length), (query_length, 1)))
-        memory_position = nn.emit(broadcast_to(nn.emit_te(arange, key_length), (1, key_length)))
+        context_position = nn.emit(reshape(nn.emit_te(arange, query_length), (query_length, 1)))
+        memory_position = nn.emit(reshape(nn.emit_te(arange, key_length), (1, key_length)))
         relative_position = nn.emit(memory_position - context_position)  # shape (query_length, key_length)
         relative_position_bucket = self._relative_position_bucket(
             relative_position,  # shape (query_length, key_length)
