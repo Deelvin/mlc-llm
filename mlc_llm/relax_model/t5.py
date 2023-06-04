@@ -228,7 +228,7 @@ class T5Attention(nn.Module):
         def arange(len):
             return te.compute(
                 (len,),
-                lambda i: i,
+                lambda i: i.astype("int32"),
                 name="arange",
                 )
         
@@ -804,7 +804,7 @@ def create_encoding_func(bb: relax.BlockBuilder, config: T5Config) -> None:
         config.is_decoder = False
         config.use_cache = False
 
-        # TODO(amalyshe): beloц embeddings are shared between encoder and decoder, originally it was declared in
+        # TODO(amalyshe): below embeddings are shared between encoder and decoder, originally it was declared in
         # T5ForConditionalGeneration but I started to implement from encoder only
         # and we do not have T5ForConditionalGeneration so far or may be never have it
         # but we need to create shared embed tokens. Here they are
