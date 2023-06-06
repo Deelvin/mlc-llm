@@ -80,19 +80,25 @@ class T5DenseGatedActDense(nn.Module):
     def __init__(self, config: T5Config):
         self.wi_0 = Linear(config.d_model, config.d_ff, dtype = config.dtype, bias=False)
         self.wi_1 = Linear(config.d_model, config.d_ff, dtype = config.dtype, bias=False)
-        self.wo = Linear(config.d_ff, config.d_model, dtype = config.dtype, bias=False)
+        self.wo = Linear(config.d_ff, config.d_model, dtype = "float32", bias=False)
         self.act = config.dense_act_fn
+        self.dtype = config.dtype
 
     def forward(self, hidden_states):
         from tvm.relax.op.nn import gelu
+        from tvm.relax.op import astype
+
         if self.act == 'gelu':
             hidden_gelu = gelu(self.wi_0(hidden_states))
         else:
             assert 0
         hidden_linear = self.wi_1(hidden_states)
         hidden_states = hidden_gelu * hidden_linear
-
+        if self.dtype != "float32":
+            hidden_states = astype(hidden_states, "float32")
         hidden_states = self.wo(hidden_states)
+        if self.dtype != "float32":
+            hidden_states = astype(hidden_states, self.dtype)    
         return hidden_states
 
 
@@ -217,7 +223,8 @@ class T5Attention(nn.Module):
         # The other half of the buckets are for logarithmically bigger bins in positions up to max_distance
         relative_position_if_large = nn.emit_te(relative_position_if_large_calc, relative_position, max_exact, max_distance, num_buckets)
 
-        relative_buckets = nn.emit_te(relative_buckets_calc, relative_position, relative_position_if_large, max_exact)
+        relative_buckets = nn.emit( relative_buckets +
+            nn.emit_te(relative_buckets_calc, relative_position, relative_position_if_large, max_exact))
         return relative_buckets
 
     def compute_bias(self, query_length, key_length, device=None):
@@ -567,6 +574,8 @@ class T5Block(nn.Module):
         #     )
         #     hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
+        if hidden_states.struct_info.dtype == "float16":
+            hidden_states = nn.emit(relax.op.clip(hidden_states, -64504., 64504.))
         outputs = (hidden_states,)
 
         if use_cache:
@@ -854,16 +863,29 @@ def get_model(args, hf_config):
         hf_model = T5ForConditionalGeneration.from_pretrained(model_path)
         # Get a list of parameters in advance, then delete the model to save memory
         # param_list = [param for _, param in hf_model.named_parameters()]
-        for name, param in hf_model.named_parameters():
-            print(name, param.shape)
+        # i = 0
+        # for name, param in hf_model.named_parameters():
+        #     if i == 21:
+        #         print(name, param.shape, param)
+        #     i = i + 1
         # Get a list of parameters in advance, then delete the model to save memory
-        param_list = [param for _, param in hf_model.named_parameters()]
 
-        for i, param in enumerate(param_list):
-            param_list[i] = tvm.nd.array(
-                param.detach().cpu().numpy().astype(config.dtype), device
-            )            
-        del hf_model
+        params2 = {}
+        param_list = []
+        for name, param in hf_model.named_parameters():
+            tdtype = "float32" if "wo.weight" in name else config.dtype
+            param_list.append(tvm.nd.array(
+                    param.detach().cpu().numpy().astype(tdtype), device
+                )
+            )
+
+        # param_list = [param for _, param in hf_model.named_parameters()]
+
+        # for i, param in enumerate(param_list):
+        #     param_list[i] = tvm.nd.array(
+        #         param.detach().cpu().numpy().astype(config.dtype), device
+        #     )            
+        # del hf_model
 
         print(mod)
         return mod, param_list
