@@ -25,6 +25,8 @@ class T5Config:
         relative_attention_num_buckets,
         relative_attention_max_distance,
         feed_forward_proj,
+        num_decoder_layers,
+        tie_word_embeddings,
         dtype="float32",
         vocab_size=32128,
         **kwargs,
@@ -35,8 +37,9 @@ class T5Config:
         self.d_ff = d_ff
         self.num_heads = num_heads
         self.num_layers = num_layers
+        self.num_decoder_layers = num_decoder_layers
         self.layer_norm_epsilon = layer_norm_epsilon
-       
+
         self.is_decoder = True
         self.relative_attention_num_buckets = relative_attention_num_buckets
         self.relative_attention_max_distance = relative_attention_max_distance
@@ -47,13 +50,24 @@ class T5Config:
         act_info = feed_forward_proj.split("-")
         self.dense_act_fn = act_info[-1]
         self.is_gated_act = act_info[0] == "gated"
-    
+
         self.vocab_size = vocab_size
         self.use_cache = False
+        self.tie_word_embeddings = tie_word_embeddings
         self.kwargs = kwargs
 
 
 T5LayerNorm = LlamaRMSNorm
+
+class T5Utils:
+    # emulates torch.arange behaviour
+    @staticmethod
+    def arange(len):
+        return te.compute(
+            (len,),
+            lambda i: i.astype("int32"),
+            name="arange",
+            )
 
 
 class T5DenseActDense(nn.Module):
@@ -98,7 +112,7 @@ class T5DenseGatedActDense(nn.Module):
             hidden_states = astype(hidden_states, "float32")
         hidden_states = self.wo(hidden_states)
         if self.dtype != "float32":
-            hidden_states = astype(hidden_states, self.dtype)    
+            hidden_states = astype(hidden_states, self.dtype)
         return hidden_states
 
 
@@ -196,7 +210,7 @@ class T5Attention(nn.Module):
                 name="relative_position_if_large_calc",
             )
 
-        # is_small = relative_position < max_exact        
+        # is_small = relative_position < max_exact
         # relative_buckets += torch.where(is_small, relative_position, relative_position_if_large)
         def relative_buckets_calc(x, y, max_exact):
             return te.compute(
@@ -214,7 +228,21 @@ class T5Attention(nn.Module):
             relative_buckets = nn.emit_te(mult_positive, relative_position, num_buckets)
             relative_position = nn.emit(relax.op.abs(relative_position))
         else:
-            relative_position = -torch.min(relative_position, torch.zeros_like(relative_position))
+            def torch_min_mult(x, y, dtype):
+                return te.compute(
+                    x.shape,
+                    lambda i, j: -1 * tvm.tir.min(
+                        x[i,j],
+                        y[i,j]).astype(dtype)
+                    ,
+                    name="relative_position_if_large_calc",
+                )
+            relative_position = nn.emit_te(torch_min_mult,
+                                           relative_position,
+                                           nn.emit(relax.op.zeros_like(relative_position, dtype = relative_position.struct_info.dtype)),
+                                           relative_position.struct_info.dtype
+            )
+            relative_buckets = nn.emit(relax.op.zeros_like(relative_position, dtype = "int32"))
         # now relative_position is in the range [0, inf)
 
         # half of the buckets are for exact increments in positions
@@ -230,17 +258,9 @@ class T5Attention(nn.Module):
     def compute_bias(self, query_length, key_length, device=None):
         """Compute binned relative position bias"""
         from tvm.relax.op import permute_dims, expand_dims, reshape
-        
-        # emulates torch.arange behaviour
-        def arange(len):
-            return te.compute(
-                (len,),
-                lambda i: i.astype("int32"),
-                name="arange",
-                )
-        
-        context_position = nn.emit(reshape(nn.emit_te(arange, query_length), (query_length, 1)))
-        memory_position = nn.emit(reshape(nn.emit_te(arange, key_length), (1, key_length)))
+
+        context_position = nn.emit(reshape(nn.emit_te(T5Utils.arange, query_length), (query_length, 1)))
+        memory_position = nn.emit(reshape(nn.emit_te(T5Utils.arange, key_length), (1, key_length)))
         relative_position = nn.emit(memory_position - context_position)  # shape (query_length, key_length)
         relative_position_bucket = self._relative_position_bucket(
             relative_position,  # shape (query_length, key_length)
@@ -350,7 +370,7 @@ class T5Attention(nn.Module):
 
         if position_bias is None:
             if not self.has_relative_attention_bias:
-                position_bias = nn.emit(relax.op.zeros(1, self.n_heads, real_seq_length, key_length), scores.struct_info.dtype)
+                position_bias = nn.emit(relax.op.zeros((1, self.n_heads, real_seq_length, key_length), scores.struct_info.dtype))
             else:
                 position_bias = self.compute_bias(real_seq_length, key_length)
 
@@ -361,7 +381,7 @@ class T5Attention(nn.Module):
                 position_bias = nn.emit(relax.op.split(position_bias, [position_bias.struct_info.shape[2] - hidden_states.struct_info.shape[1]], axis = 2))
 
             if mask is not None:
-                position_bias = position_bias + mask  # (batch_size, n_heads, seq_length, key_length)
+                position_bias = nn.emit(position_bias + mask)  # (batch_size, n_heads, seq_length, key_length)
 
         if self.pruned_heads:
             mask = torch.ones(position_bias.shape[1])
@@ -441,22 +461,21 @@ class T5LayerCrossAttention(nn.Module):
         query_length=None,
         output_attentions=False,
     ):
-        print("")
-        # normed_hidden_states = self.layer_norm(hidden_states)
-        # attention_output = self.EncDecAttention(
-        #     normed_hidden_states,
-        #     mask=attention_mask,
-        #     key_value_states=key_value_states,
-        #     position_bias=position_bias,
-        #     layer_head_mask=layer_head_mask,
-        #     past_key_value=past_key_value,
-        #     use_cache=use_cache,
-        #     query_length=query_length,
-        #     output_attentions=output_attentions,
-        # )
-        # layer_output = hidden_states + self.dropout(attention_output[0])
-        # outputs = (layer_output,) + attention_output[1:]  # add attentions if we output them
-        # return outputs
+        normed_hidden_states = self.layer_norm(hidden_states)
+        attention_output = self.EncDecAttention(
+            normed_hidden_states,
+            mask=attention_mask,
+            key_value_states=key_value_states,
+            position_bias=position_bias,
+            layer_head_mask=layer_head_mask,
+            past_key_value=past_key_value,
+            use_cache=use_cache,
+            query_length=query_length,
+            output_attentions=output_attentions,
+        )
+        layer_output = nn.emit(hidden_states + attention_output[0])
+        outputs = (layer_output,) + attention_output[1:]  # add attentions if we output them
+        return outputs
 
 
 class T5Block(nn.Module):
@@ -486,7 +505,7 @@ class T5Block(nn.Module):
     ):
         if past_key_value is not None:
             # TODO(amalyshe): this branch should be executed in decoder
-            assert(1)
+            assert 0
             if not self.is_decoder:
                 logger.warning("`past_key_values` is passed to the encoder. Please make sure this is intended.")
             expected_num_past_key_values = 2 if encoder_hidden_states is None else 4
@@ -529,7 +548,7 @@ class T5Block(nn.Module):
             # the actual query length is unknown for cross attention
             # if using past key value states. Need to inject it here
             if present_key_value_state is not None:
-                query_length = present_key_value_state[0].shape[2]
+                query_length = present_key_value_state[0].struct_info.shape[2]
             else:
                 query_length = None
 
@@ -546,14 +565,10 @@ class T5Block(nn.Module):
             )
             hidden_states = cross_attention_outputs[0]
 
-            # clamp inf values to enable fp16 training
-            if hidden_states.dtype == torch.float16:
-                clamp_value = torch.where(
-                    torch.isinf(hidden_states).any(),
-                    torch.finfo(hidden_states.dtype).max - 1000,
-                    torch.finfo(hidden_states.dtype).max,
-                )
-                hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
+            # it was a clamp for fp16 training, here, let's try to apply fp16 clamping for inference
+            # in pure fp16
+            if hidden_states.struct_info.dtype == "float16":
+                hidden_states = nn.emit(relax.op.clip(hidden_states, -64504., 64504.))
 
             # Combine self attn and cross attn key value states
             if present_key_value_state is not None:
@@ -600,13 +615,41 @@ class T5Stack(nn.Module):
     def set_input_embeddings(self, new_embeddings):
         self.embed_tokens = new_embeddings
 
+    def create_extended_attention_mask_for_decoder(self, input_shape, attention_mask, device=None):
+        from tvm.relax.op import reshape
+        batch_size, seq_length = input_shape
+        if batch_size == 1 and seq_length == 1:
+           return nn.emit(reshape(attention_mask, (1,1,1,1)))
+        else:
+           assert 0
+           #below code should be implemented on relax
+        # batch_size, seq_length = input_shape.struct_info.shape
+        # seq_ids = nn.emit(reshape(nn.emit_te(T5Utils.arange, seq_length), (1, 1, seq_length)))
+        # causal_mask = seq_ids[None, None, :].repeat(batch_size, seq_length, 1) <= seq_ids[None, :, None]
+        # # in case past_key_values are used we need to add a prefix ones mask to the causal mask
+        # # causal and attention masks must have same type with pytorch version < 1.3
+        # causal_mask = causal_mask.to(attention_mask.dtype)
+
+        # if causal_mask.shape[1] < attention_mask.shape[1]:
+        #     prefix_seq_len = attention_mask.shape[1] - causal_mask.shape[1]
+        #     causal_mask = torch.cat(
+        #         [
+        #             torch.ones((batch_size, seq_length, prefix_seq_len), device=device, dtype=causal_mask.dtype),
+        #             causal_mask,
+        #         ],
+        #         axis=-1,
+        #     )
+
+        # extended_attention_mask = causal_mask[:, None, :, :] * attention_mask[:, None, None, :]
+        # return extended_attention_mask
+
+
     def get_extended_attention_mask(
         self, attention_mask, input_shape, dtype = "float32"
     ):
         from tvm.relax.op import astype, broadcast_to
         batch_size = None
         seq_length = None
-
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
         if attention_mask.struct_info.ndim == 3:
@@ -615,15 +658,12 @@ class T5Stack(nn.Module):
             # Provided a padding mask of dimensions [batch_size, seq_length]
             # - if the model is a decoder, apply a causal mask in addition to the padding mask
             # - if the model is an encoder, make the mask broadcastable to [batch_size, num_heads, seq_length, seq_length]
+            batch_size, seq_length = attention_mask.struct_info.shape
             if self.config.is_decoder:
-                assert 1
-                extended_attention_mask = ModuleUtilsMixin.create_extended_attention_mask_for_decoder(
-                    input_shape, attention_mask, device
-                )
+                extended_attention_mask = self.create_extended_attention_mask_for_decoder(
+                    input_shape, attention_mask)
             else:
-                batch_size, seq_length = attention_mask.struct_info.shape
                 extended_attention_mask = nn.emit(broadcast_to(attention_mask, (batch_size, 1, 1, seq_length)))
-                #extended_attention_mask = attention_mask[:, None, None, :]
         else:
             raise ValueError(
                 f"Wrong shape for input_ids (shape {input_shape}) or attention_mask (shape {attention_mask.shape})"
@@ -636,14 +676,41 @@ class T5Stack(nn.Module):
         att_mask_filled_min = nn.emit(
             relax.op.full(
                 (batch_size, 1, 1, seq_length),
-                relax.const(tvm.tir.max_value(dtype).value, dtype),
+                relax.const(tvm.tir.min_value(dtype).value, dtype),
                 dtype,
             )
         )
         extended_attention_mask = nn.emit(
             (relax.const(1.0, dtype) - astype(extended_attention_mask, dtype)) * att_mask_filled_min)
-        
+
         return extended_attention_mask
+
+    def invert_attention_mask(self, encoder_attention_mask):
+        """
+        Implement the same behaviour as in Transformer's ModuleUtilsMixin.invert_attention_mask
+        """
+        from tvm.relax.op import astype, broadcast_to
+        dtype = encoder_attention_mask.struct_info.dtype
+        if encoder_attention_mask.struct_info.ndim == 3:
+            #TODO(amalyshe): need to remove?
+            assert 0
+            encoder_extended_attention_mask = encoder_attention_mask[:, None, :, :]
+            encoder_extended_attention_mask = nn.emit(broadcast_to(encoder_attention_mask, (batch_size, 1, 1, seq_length)))
+        if encoder_attention_mask.struct_info.ndim == 2:
+            batch_size, seq_length = encoder_attention_mask.struct_info.shape
+            encoder_extended_attention_mask = nn.emit(broadcast_to(encoder_attention_mask, (batch_size, 1, 1, seq_length)))
+        mask_filled_min = nn.emit(
+            relax.op.full(
+                (batch_size, 1, 1, seq_length),
+                relax.const(tvm.tir.min_value(dtype).value, dtype),
+                dtype,
+            )
+        )
+        encoder_extended_attention_mask = nn.emit(
+            astype((relax.const(1.0, dtype) - astype(encoder_extended_attention_mask, dtype)) * mask_filled_min,
+                    self.config.dtype))
+
+        return encoder_extended_attention_mask
 
     def forward(
         self,
@@ -666,35 +733,33 @@ class T5Stack(nn.Module):
         )
 
         if input_ids is not None and inputs_embeds is not None:
-            err_msg_prefix = "decoder_" if self.is_decoder else ""
-            raise ValueError(
+            assert ValueError(
                 f"You cannot specify both {err_msg_prefix}input_ids and {err_msg_prefix}inputs_embeds at the same time"
             )
-        # TODO(amalyshe): do we need to have shapes here?
-        # it should be enough to pass relax placeholders as is
-        # elif input_ids is not None:
-        #     input_shape = input_ids.size()
-        #     input_ids = input_ids.view(-1, input_shape[-1])
-        # elif inputs_embeds is not None:
-        #     input_shape = inputs_embeds.size()[:-1]
-        # else:
-        #     err_msg_prefix = "decoder_" if self.is_decoder else ""
-        #     raise ValueError(f"You have to specify either {err_msg_prefix}input_ids or {err_msg_prefix}inputs_embeds")
+        elif input_ids is not None:
+            input_shape = input_ids.struct_info.shape
+            # input_ids = input_ids.view(-1, input_shape[-1])
+        elif inputs_embeds is not None:
+            input_shape = inputs_embeds.size()[:-1]
+        else:
+            err_msg_prefix = "decoder_" if self.is_decoder else ""
+            assert ValueError(f"You have to specify either {err_msg_prefix}input_ids or {err_msg_prefix}inputs_embeds")
 
         if inputs_embeds is None:
             assert self.embed_tokens is not None, "You have to initialize the model with valid token embeddings"
             inputs_embeds = self.embed_tokens(input_ids)
 
-        # batch_size, seq_length = input_shape
+        batch_size, seq_length = input_shape
 
         # # required mask seq length can be calculated via length of past
-        # mask_seq_length = past_key_values[0][0].shape[2] + seq_length if past_key_values is not None else seq_length
+        mask_seq_length = past_key_values[0][0].struct_info.shape[2] + seq_length if past_key_values is not None else seq_length
 
         # if use_cache is True:
         #     assert self.is_decoder, f"`use_cache` can only be set to `True` if {self} is used as a decoder"
 
-        # if attention_mask is None:
-        #     attention_mask = torch.ones(batch_size, mask_seq_length, device=inputs_embeds.device)
+        if attention_mask is None:
+            attention_mask = nn.emit(relax.op.ones((batch_size, mask_seq_length), self.config.dtype))
+
         # if self.is_decoder and encoder_attention_mask is None and encoder_hidden_states is not None:
         #     encoder_seq_length = encoder_hidden_states.shape[1]
         #     encoder_attention_mask = torch.ones(
@@ -714,12 +779,11 @@ class T5Stack(nn.Module):
         # # If a 2D or 3D attention mask is provided for the cross-attention
         # # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
         if self.is_decoder and encoder_hidden_states is not None:
-            print("TODO: uncomment below?")
-        #     encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
-        #     encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
-        #     if encoder_attention_mask is None:
-        #         encoder_attention_mask = torch.ones(encoder_hidden_shape, device=inputs_embeds.device)
-        #     encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
+            encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.struct_info.shape
+            encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
+            if encoder_attention_mask is None:
+                encoder_attention_mask = nn.emit(relax.op.ones(encoder_hidden_shape, self.config.dtype))
+            encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
         else:
             encoder_extended_attention_mask = None
 
@@ -817,7 +881,7 @@ def create_encoding_func(bb: relax.BlockBuilder, config: T5Config) -> None:
         # T5ForConditionalGeneration but I started to implement from encoder only
         # and we do not have T5ForConditionalGeneration so far or may be never have it
         # but we need to create shared embed tokens. Here they are
-        # and due to restrictions of nn.Params, this creation should be called inside 
+        # and due to restrictions of nn.Params, this creation should be called inside
         # with bb.function...:
         # that is conflicts with nature of shared param for encoder and decoder
         shared_embed_tokens = Embedding(config.vocab_size, config.d_model, dtype=config.dtype)
@@ -841,6 +905,174 @@ def create_encoding_func(bb: relax.BlockBuilder, config: T5Config) -> None:
     bb.update_func(gv, mod[gv].with_attr("num_input", 2))
 
 
+def create_encoding_func2(bb: relax.BlockBuilder, config: T5Config) -> None:
+    bsz = 1
+    seq_len = tvm.tir.Var("n", "int64")
+    with bb.function("encode2"):
+        config.is_decoder = False
+        config.use_cache = False
+
+        # TODO(amalyshe): below embeddings are shared between encoder and decoder, originally it was declared in
+        # T5ForConditionalGeneration but I started to implement from encoder only
+        # and we do not have T5ForConditionalGeneration so far or may be never have it
+        # but we need to create shared embed tokens. Here they are
+        # and due to restrictions of nn.Params, this creation should be called inside
+        # with bb.function...:
+        # that is conflicts with nature of shared param for encoder and decoder
+        shared_embed_tokens = Embedding(config.vocab_size, config.d_model, dtype=config.dtype)
+
+        model = T5Stack(config, shared_embed_tokens)
+        input_ids = nn.Placeholder((bsz, 1), dtype="int32", name="input_ids")
+        attention_mask = nn.Placeholder((bsz, seq_len), dtype="int32", name="attention_mask")
+        with bb.dataflow():
+            last_hidden_state = model(
+                input_ids = input_ids, attention_mask = attention_mask
+            )
+            params = [
+                input_ids,
+                attention_mask,
+            ] + model.parameters()
+            gv = bb.emit_output(last_hidden_state)
+        bb.emit_func_output(gv, params)
+
+    mod = bb.get()
+    gv = mod.get_global_var("encode2")
+    bb.update_func(gv, mod[gv].with_attr("num_input", 2))
+
+
+class T5ForConditionalGenerationRelax(nn.Module):
+    def __init__(self, config: T5Config, shared_embed_tokens: Embedding):
+        self.config = config
+        self.model_dim = config.d_model
+        # self.shared = Embedding(config.vocab_size, config.d_model, dtype = config.dtype)
+
+        decoder_config = config
+        decoder_config.is_decoder = True
+        decoder_config.is_encoder_decoder = False
+        decoder_config.num_layers = config.num_decoder_layers
+        #self.decoder = T5Stack(decoder_config, self.shared)
+        self.decoder = T5Stack(decoder_config, shared_embed_tokens)
+
+        self.lm_head = Linear(config.d_model, config.vocab_size, dtype = config.dtype, bias=False)
+
+    def forward(
+        self,
+        input_ids = None,
+        attention_mask = None,
+        decoder_input_ids = None,
+        decoder_attention_mask = None,
+        head_mask = None,
+        decoder_head_mask = None,
+        cross_attn_head_mask = None,
+        encoder_outputs = None,
+        past_key_values = None,
+        inputs_embeds = None,
+        decoder_inputs_embeds = None,
+        labels = None,
+        use_cache = None,
+        output_attentions = None,
+        output_hidden_states = None,
+        return_dict = None,
+    ):
+        use_cache = use_cache if use_cache is not None else self.config.use_cache
+
+        # Decode
+        decoder_outputs = self.decoder(
+            input_ids=decoder_input_ids,
+            attention_mask=decoder_attention_mask,
+            inputs_embeds=decoder_inputs_embeds,
+            past_key_values=past_key_values,
+            encoder_hidden_states=encoder_outputs,
+            encoder_attention_mask=attention_mask,
+            head_mask=decoder_head_mask,
+            cross_attn_head_mask=cross_attn_head_mask,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+        )
+
+        sequence_output = decoder_outputs[0]
+
+        if self.config.tie_word_embeddings:
+            # Rescale output before projecting on vocab
+            # See https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/transformer/transformer.py#L586
+            sequence_output = sequence_output * (self.model_dim**-0.5)
+
+        lm_logits = self.lm_head(sequence_output)
+
+        loss = None
+        if labels is not None:
+            loss_fct = CrossEntropyLoss(ignore_index=-100)
+            # move labels to correct device to enable PP
+            labels = labels.to(lm_logits.device)
+            loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
+            # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
+
+        #return (lm_logits,)
+        output = (lm_logits,)
+        for i in decoder_outputs[1:][0]:
+            for j in i:
+                output += (j,)
+        return output
+
+        #return (lm_logits,) + decoder_outputs[1:]
+        # if not return_dict:
+        #     output = (lm_logits,) + decoder_outputs[1:] + encoder_outputs
+        #     return ((loss,) + output) if loss is not None else output
+
+        # return Seq2SeqLMOutput(
+        #     loss=loss,
+        #     logits=lm_logits,
+        #     past_key_values=decoder_outputs.past_key_values,
+        #     decoder_hidden_states=decoder_outputs.hidden_states,
+        #     decoder_attentions=decoder_outputs.attentions,
+        #     cross_attentions=decoder_outputs.cross_attentions,
+        #     encoder_last_hidden_state=encoder_outputs.last_hidden_state,
+        #     encoder_hidden_states=encoder_outputs.hidden_states,
+        #     encoder_attentions=encoder_outputs.attentions,
+        # )
+
+
+
+def create_decoding_first_iter_func(bb: relax.BlockBuilder, config: T5Config) -> None:
+    bsz = 1
+    seq_len = tvm.tir.Var("n", "int64")
+    with bb.function("decode"):
+        config.is_decoder = True
+        config.use_cache = True
+        shared_embed_tokens = Embedding(config.vocab_size, config.d_model, dtype=config.dtype)
+        model = T5ForConditionalGenerationRelax(config, shared_embed_tokens)
+        decoder_input_ids = nn.Placeholder((bsz, 1), dtype="int32", name="decoder_input_ids")
+        # 768 must be a multiplications from config
+        # TODO(amalyshe) - verify if config.num_heads * config.d_kv is correct
+        encoder_outputs = nn.Placeholder((bsz, seq_len, config.num_heads * config.d_kv),
+                                         dtype=config.dtype, name="decoder_input_ids")
+        attention_mask = nn.Placeholder((bsz, seq_len), dtype="int32", name="attention_mask")
+        output_attentions = False
+        output_hidden_states = False
+
+        with bb.dataflow():
+            lm_logits = model(
+                decoder_input_ids = decoder_input_ids,
+                attention_mask = attention_mask,
+                encoder_outputs = encoder_outputs,
+                output_attentions = output_attentions,
+                output_hidden_states = output_hidden_states,
+            )
+            params = [
+                decoder_input_ids,
+                attention_mask,
+                encoder_outputs,
+            ] + model.parameters()
+            #gv = bb.emit_output(relax.Tuple(last_hidden_state))
+            gv = bb.emit_output(lm_logits)
+        bb.emit_func_output(gv, params)
+
+    mod = bb.get()
+    gv = mod.get_global_var("decode")
+    bb.update_func(gv, mod[gv].with_attr("num_input", 3))
+
+
 def get_model(args, hf_config):
     from transformers import T5ForConditionalGeneration # type: ignore[import]
 
@@ -856,7 +1088,8 @@ def get_model(args, hf_config):
 
         bb = relax.BlockBuilder()
         create_encoding_func(bb, config)
-
+        # create_encoding_func2(bb, config)
+        create_decoding_first_iter_func(bb, config)
         mod = bb.get()
 
         device = tvm.cpu()
@@ -884,7 +1117,7 @@ def get_model(args, hf_config):
         # for i, param in enumerate(param_list):
         #     param_list[i] = tvm.nd.array(
         #         param.detach().cpu().numpy().astype(config.dtype), device
-        #     )            
+        #     )
         # del hf_model
 
         print(mod)

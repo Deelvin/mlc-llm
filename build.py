@@ -227,7 +227,7 @@ def mod_transform_before_build(
     model_names = [
         "encode",
         # "prefill",
-        # "decode",
+        "decode",
         # "create_kv_cache",
         # "softmax_with_temperature",
         # "get_metadata",
@@ -249,7 +249,6 @@ def mod_transform_before_build(
     mod = relax.transform.DeadCodeElimination(model_names)(mod)
     mod = relax.transform.LiftTransformParams()(mod)
     mod_transform, mod_deploy = utils.split_transform_deploy_mod(mod, model_names)
-
     debug_dump_script(mod_transform, "mod_lift_params.py", args)
 
     new_params = utils.transform_params(mod_transform, model_params)
