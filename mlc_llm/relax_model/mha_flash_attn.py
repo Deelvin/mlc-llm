@@ -1,4 +1,4 @@
-# Implementation of flash attention on Relax based on https://github.com/HazyResearch/flash-attention
+# Implementation of flash attention (multi-head attention) on Relax based on https://github.com/HazyResearch/flash-attention
 from tvm import relax
 from tvm.relax.testing import nn
 
