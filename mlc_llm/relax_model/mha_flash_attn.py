@@ -2,24 +2,27 @@
 from tvm import relax
 from tvm.relax.testing import nn
 
-from einops import rearrange, repeat  # TODO: remove
+from einops import rearrange  # TODO: remove
 
 
-class IndexFirstAxis(torch.autograd.Function):
+def index_first_axis(input, indices):
+  assert input.struct_info.ndim >= 2
+  batch_size, *other_shape = input.struct_info.shape
+  second_dim = relax.const(1)
+  for dim in other_shape:
+    second_dim = second_dim * dim
+  # For some reason gather is a bit faster than indexing.
+  # return input[indices]
+  return nn.emit(relax.op.reshape(
+    # TODO: gather on Relax
+    torch.gather(
+      relax.op.reshape(input, (batch_size, -1))   # b ... -> b (...)
+      0,
+      relax.op.repeat(indices, second_dim, 1)     # z -> z d
+    ),
+    (-1, *other_shape),
+  ))
 
-    @staticmethod
-    def forward(ctx, input, indices):
-        ctx.save_for_backward(indices)
-        assert input.ndim >= 2
-        ctx.first_axis_dim, other_shape = input.shape[0], input.shape[1:]
-        second_dim = other_shape.numel()
-        # TD [2022-03-04] For some reason torch.gather is a bit faster than indexing.
-        # return input[indices]
-        return torch.gather(rearrange(input, 'b ... -> b (...)'), 0,
-                            repeat(indices, 'z -> z d', d=second_dim)).reshape(-1, *other_shape)
-
-
-index_first_axis = IndexFirstAxis.apply
 
 import torch
 class IndexPutFirstAxis(torch.autograd.Function):
