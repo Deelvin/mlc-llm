@@ -24,23 +24,17 @@ def index_first_axis(input, indices):
   ))
 
 
-import torch
-class IndexPutFirstAxis(torch.autograd.Function):
-
-    @staticmethod
-    def forward(ctx, values, indices, first_axis_dim):
-        ctx.save_for_backward(indices)
-        assert indices.ndim == 1
-        assert values.ndim >= 2
-        output = torch.zeros(first_axis_dim, *values.shape[1:], device=values.device,
-                             dtype=values.dtype)
-        # TD [2022-03-04] For some reason torch.scatter is a bit faster than indexing.
-        output[indices] = values
-        # output.scatter_(0, repeat(indices, 'z -> z d', d=values.shape[1]), values)
-        return output
-
-
-index_put_first_axis = IndexPutFirstAxis.apply
+def index_put_first_axis(values, indices, first_axis_dim):
+  assert indices.struct_info.ndim == 1
+  assert values.struct_info.ndim >= 2
+  _, *other_shape = values.struct_info.shape
+  repeats = values.struct_info.shape[1]
+  output = nn.emit(relax.op.zeros((first_axis_dim, *other_shape), values.struct_info.dtype))
+  output = nn.emit(relax.op.scatter_elements(
+    output,
+    relax.op.repeat(indices, repeats, 1),  # z -> z d
+    values))
+  return output
 
 
 def bert_padding_unpad_input(hidden_states, attention_mask):
