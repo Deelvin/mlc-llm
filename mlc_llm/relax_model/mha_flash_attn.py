@@ -2,8 +2,6 @@
 from tvm import relax
 from tvm.relax.testing import nn
 
-from einops import rearrange  # TODO: remove
-
 
 def index_first_axis(input, indices):
   assert input.struct_info.ndim >= 2
@@ -78,6 +76,7 @@ def bert_padding_pad_input(hidden_states, indices, batch, seqlen):
   return nn.emit(relax.op.reshape(output, (batch, seqlen, -1))) # (b s) ... -> b s ...
 
 
+# TODO: potentially dropout can be remove from anywhere
 def _flash_attn_forward(q, k, v, out, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
                         dropout_p, softmax_scale, causal, return_softmax, num_splits=0,
                         generator=None):
@@ -101,6 +100,7 @@ def _flash_attn_forward(q, k, v, out, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, 
     return out, softmax_lse, rng_state, S_dmask
 
 
+# TODO: potentially dropout can be remove from anywhere
 def flash_attn_unpadded_func(q, k, v, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
     dropout_p, softmax_scale=None, causal=False, return_attn_probs=False,
     deterministic=False
