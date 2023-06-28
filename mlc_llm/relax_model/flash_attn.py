@@ -1,3 +1,4 @@
+# Implementation of flash attention on Relax based on https://github.com/HazyResearch/flash-attention
 from tvm import relax
 from tvm.relax.testing import nn
 
@@ -67,7 +68,7 @@ def bert_padding_pad_input(hidden_states, indices, batch, seqlen):
     output = index_put_first_axis(hidden_states, indices, batch * seqlen)
     return rearrange(output, '(b s) ... -> b s ...', b=batch)
 
-import flash_attn_cuda
+
 def _flash_attn_forward(q, k, v, out, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
                         dropout_p, softmax_scale, causal, return_softmax, num_splits=0,
                         generator=None):
@@ -76,13 +77,18 @@ def _flash_attn_forward(q, k, v, out, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, 
     it will be set by an internal heuristic. We're exposing num_splits mostly for benchmarking.
     Don't change it unless you know what you're doing.
     """
-    softmax_lse, rng_state, *rest = flash_attn_cuda.fwd(
-        q, k, v, out, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, dropout_p,
-        softmax_scale, False, causal, return_softmax, num_splits, generator
-    )
-    # if out.isnan().any() or softmax_lse.isnan().any():
-    #     breakpoint()
-    S_dmask = rest[0] if return_softmax else None
+    # CUDA kernel is implemented in mha_frw method from https://github.com/HazyResearch/flash-attention/blob/main/csrc/flash_attn/fmha_api.cpp
+    # TODO(vchernov): CUDA kernel should be replaced by implementation on TVM side
+    # import flash_attn_cuda
+    # softmax_lse, rng_state, *rest = flash_attn_cuda.fwd(
+    #     q, k, v, out, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, 0, # dropout_p = 0 for inference
+    #     softmax_scale, False, causal, return_softmax, num_splits, generator
+    # )
+    # S_dmask = rest[0] if return_softmax else None
+    out = None          # Dummy value while computation is commented
+    softmax_lse = None  # Dummy value while computation is commented
+    rng_state = None    # Dummy value while computation is commented
+    S_dmask = None      # Dummy value while computation is commented
     return out, softmax_lse, rng_state, S_dmask
 
 
