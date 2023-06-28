@@ -67,18 +67,15 @@ def bert_padding_unpad_input(hidden_states, attention_mask):
 
 
 def bert_padding_pad_input(hidden_states, indices, batch, seqlen):
-    """
-    Arguments:
-        hidden_states: (total_nnz, ...), where total_nnz = number of tokens in selected in attention_mask.
-        indices: (total_nnz)
-    Return:
-        hidden_states: (batch, seqlen, ...)
-    """
-    dim = hidden_states.shape[-1]
-    # output = torch.zeros((batch * seqlen), dim, device=hidden_states.device, dtype=hidden_states.dtype)
-    # output[indices] = hidden_states
-    output = index_put_first_axis(hidden_states, indices, batch * seqlen)
-    return rearrange(output, '(b s) ... -> b s ...', b=batch)
+  """
+  Arguments:
+      hidden_states: (total_nnz, ...), where total_nnz = number of tokens in selected in attention_mask.
+      indices: (total_nnz)
+  Return:
+      hidden_states: (batch, seqlen, ...)
+  """
+  output = index_put_first_axis(hidden_states, indices, batch * seqlen)
+  return nn.emit(relax.op.reshape(output, (batch, seqlen, -1))) # (b s) ... -> b s ...
 
 
 def _flash_attn_forward(q, k, v, out, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
