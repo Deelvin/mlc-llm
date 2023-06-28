@@ -38,17 +38,32 @@ def index_put_first_axis(values, indices, first_axis_dim):
 
 
 def bert_padding_unpad_input(hidden_states, attention_mask):
-  seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
-  indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
-  max_seqlen_in_batch = seqlens_in_batch.max().item()
-  cu_seqlens = F.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.torch.int32), (1, 0))
-  # TD [2022-03-04] We don't want to index with a bool mask, because Pytorch will expand the
-  # bool mask, then call nonzero to get the indices, then index with those. The indices is @dim
-  # times larger than it needs to be, wasting memory. It's faster and more memory-efficient to
-  # index with integer indices. Moreover, torch's index is a bit slower than it needs to be,
-  # so we write custom forward and backward to make it a bit faster.
-  return (index_first_axis(rearrange(hidden_states, 'b s ... -> (b s) ...'), indices), indices,
-          cu_seqlens, max_seqlen_in_batch)
+  seqlens_in_batch = nn.emit(relax.op.sum(attention_mask, -1))
+  max_seqlen_in_batch = relax.op.max(seqlens_in_batch)
+  # TODO: implement nonzero or argwhere on relax and replace torch one
+  # TODO: possibly the first flatten is excess
+  indices = nn.emit(relax.op.flatten(
+    torch.nonzero(
+      relax.op.flatten(attention_mask),
+      as_tuple=False
+    )
+  ))
+  # TODO: implement pad on Relax and replace torch one
+  cu_seqlens = nn.emit(torch.nn.functional.pad(
+    relax.op.cumsum(seqlens_in_batch, 0 , dtype="int32"),
+    (1, 0)
+  ))
+  batch_size = hidden_states.struct_info.shape[0]
+  seq_len = hidden_states.struct_info.shape[1]
+  return (
+      index_first_axis(
+        relax.op.reshape(hidden_states, (batch_size * seq_len, -1)), # b s ... -> (b s) ...
+        indices
+      ),
+      indices,
+      cu_seqlens,
+      max_seqlen_in_batch
+  )
 
 
 def bert_padding_pad_input(hidden_states, indices, batch, seqlen):
