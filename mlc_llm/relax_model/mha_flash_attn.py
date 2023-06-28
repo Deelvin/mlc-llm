@@ -101,29 +101,14 @@ def _flash_attn_forward(q, k, v, out, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, 
     return out, softmax_lse, rng_state, S_dmask
 
 
-class FlashAttnFunc(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, q, k, v, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, dropout_p,
-                softmax_scale, causal, return_softmax, deterministic):
-        if softmax_scale is None:
-            softmax_scale = q.shape[-1] ** (-0.5)
-        out, softmax_lse, rng_state, S_dmask = _flash_attn_forward(
-            q, k, v, torch.empty_like(q), cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
-            dropout_p, softmax_scale, causal=causal, return_softmax=return_softmax
-        )
-        ctx.save_for_backward(q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, rng_state)
-        ctx.dropout_p = dropout_p
-        ctx.max_seqlen_q = max_seqlen_q
-        ctx.max_seqlen_k = max_seqlen_k
-        ctx.softmax_scale = softmax_scale
-        ctx.causal = causal
-        ctx.deterministic = deterministic
-        return out if not return_softmax else (out, softmax_lse, S_dmask)
-
-
 def flash_attn_unpadded_func(q, k, v, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
     dropout_p, softmax_scale=None, causal=False, return_attn_probs=False,
     deterministic=False
 ):
-  return FlashAttnFunc.apply(q, k, v, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
-                              dropout_p, softmax_scale, causal, return_attn_probs, deterministic)
+  if softmax_scale is None:
+    softmax_scale = relax.op.power(q.struct_info.shape[-1], relax.const(-0.5))
+  out, softmax_lse, _, S_dmask = _flash_attn_forward(
+      q, k, v, relax.op.zeros_like(q), cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
+      dropout_p, softmax_scale, causal=causal, return_softmax=return_attn_probs
+  )
+  return out if not return_attn_probs else (out, softmax_lse, S_dmask)
