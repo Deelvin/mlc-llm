@@ -174,7 +174,10 @@ def chat(model_wrapper, args):
 
 def get_tvm_model(args):
     device = tvm.device(args.device_name)
-    const_params = utils.load_params(args.artifact_path, device)
+    path = os.path.join(args.artifact_path, "params", "prefill_transform_params")
+    prefill_const_params = utils.load_params(path, device)
+    path = os.path.join(args.artifact_path, "params", "decode_transform_params")
+    decode_const_params = utils.load_params(path, device)
     ex = tvm.runtime.load_module(
         os.path.join(
             args.artifact_path,
@@ -198,15 +201,15 @@ def get_tvm_model(args):
             self.tot_seq_len += inputs.shape[1]
             seq_len_shape = tvm.runtime.ShapeTuple([self.tot_seq_len])
             if inputs.shape[1] > 1 and self.prefill_func:
-                inputs = tvm.nd.array(inputs.numpy(), device=device)
+                inputs = tvm.nd.array(inputs, device=device)
                 logits, kv_cache = self.prefill_func(
-                    inputs, seq_len_shape, self.kv_cache, const_params
+                    inputs, seq_len_shape, self.kv_cache, prefill_const_params
                 )
             else:
                 for i in range(inputs.shape[1]):
                     input_slice = tvm.nd.array(inputs[:, i : i + 1], device=device)
                     logits, kv_cache = vm["decode"](
-                        input_slice, seq_len_shape, self.kv_cache, const_params
+                        input_slice, seq_len_shape, self.kv_cache, decode_const_params
                     )
             self.kv_cache = kv_cache
             if self.args.debug_dump:

@@ -90,24 +90,25 @@ def split_transform_deploy_mod(
     mod_transform = tvm.IRModule()
     mod_deploy = tvm.IRModule()
 
-    transform_func_name = None
+    transform_func_names = []
     gv_names = [gv.name_hint for gv in mod.get_global_vars()]
     for name in model_names:
-        if name + "_transform_params" in gv_names:
-            transform_func_name = name + "_transform_params"
-    assert transform_func_name is not None
+        transform_func_name = name + "_transform_params"
+        if transform_func_name in gv_names:
+            transform_func_names.append(transform_func_name)
+    assert len(transform_func_names) > 0
 
     for gv in mod.functions:
         func = mod[gv]
         if isinstance(func, tvm.tir.PrimFunc):
             mod_transform[gv] = func
             mod_deploy[gv] = func
-        elif gv.name_hint == transform_func_name:
+        elif gv.name_hint in transform_func_names:
             mod_transform[gv] = func
         else:
             mod_deploy[gv] = func
 
-    mod_transform = relax.transform.DeadCodeElimination([transform_func_name])(
+    mod_transform = relax.transform.DeadCodeElimination(transform_func_names)(
         mod_transform
     )
     mod_deploy = relax.transform.DeadCodeElimination(model_names)(mod_deploy)
@@ -124,11 +125,11 @@ def transform_params(
     mod_transform = relax.transform.ToNonDataflow()(mod_transform)
     mod_transform = relax.transform.LazyTransformParams()(mod_transform)
 
-    transform_func_name = None
+    transform_func_names = []
     for gv, func in mod_transform.functions.items():
         if isinstance(func, relax.Function):
-            transform_func_name = gv.name_hint
-    assert transform_func_name is not None
+            transform_func_names.append(gv.name_hint)
+    assert len(transform_func_names) > 0
 
     target = detect_local_target()
     print(f"Automatically using target for weight quantization: {target}")
@@ -152,10 +153,14 @@ def transform_params(
         with tvm.target.Target(target):
             mod_transform = tvm.tir.transform.DefaultGPUSchedule()(mod_transform)
 
+    new_params = {}
     ex = relax.build(mod_transform, target=target)
     vm = relax.vm.VirtualMachine(ex, device)
-    vm[transform_func_name]()
-    return res
+    for transform_func_name in transform_func_names:
+        vm[transform_func_name]()
+        new_params[transform_func_name] = res
+        res = []
+    return new_params
 
 
 def save_params(params: List[tvm.nd.NDArray], artifact_path: str) -> None:
@@ -172,14 +177,14 @@ def save_params(params: List[tvm.nd.NDArray], artifact_path: str) -> None:
     total_size = total_size / 1024.0 / 1024.0 / 1024.0
     print(f"Total param size: {total_size} GB")
     tvmjs.dump_ndarray_cache(
-        param_dict, f"{artifact_path}/params", meta_data=meta_data, encode_format="raw"
+        param_dict, f"{artifact_path}", meta_data=meta_data, encode_format="raw"
     )
 
 
 def load_params(artifact_path: str, device) -> List[tvm.nd.NDArray]:
     from tvm.contrib import tvmjs  # pylint: disable=import-outside-toplevel
 
-    params, meta = tvmjs.load_ndarray_cache(f"{artifact_path}/params", device)
+    params, meta = tvmjs.load_ndarray_cache(f"{artifact_path}", device)
     plist = []
     size = meta["ParamSize"]
     for i in range(size):
