@@ -251,8 +251,19 @@ def mod_transform_before_build(
     mod_transform, mod_deploy = utils.split_transform_deploy_mod(mod, model_names)
     debug_dump_script(mod_transform, "mod_lift_params.py", args)
 
-    new_params = utils.transform_params(mod_transform, model_params)
-    utils.save_params(new_params, args.artifact_path)
+    # new_params = utils.transform_params(mod_transform, model_params)
+    # utils.save_params(new_params, args.artifact_path)
+
+    new_encode_params = utils.transform_params_independent(mod_transform, 'encode_transform_params',model_params)
+    utils.save_params(new_encode_params, args.artifact_path, 'encode')
+    model_params2 = []
+    model_params2.append(model_params[0])
+    for i in range (111, 282):
+        model_params2.append(model_params[i])
+        print(model_params[i].shape)
+    new_decode_params = utils.transform_params_independent(mod_transform, 'decode_transform_params',model_params2)
+    utils.save_params(new_decode_params, args.artifact_path, 'decode')
+
     return mod_deploy
 
 

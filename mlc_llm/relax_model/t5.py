@@ -905,41 +905,6 @@ def create_encoding_func(bb: relax.BlockBuilder, config: T5Config) -> None:
     bb.update_func(gv, mod[gv].with_attr("num_input", 2))
 
 
-def create_encoding_func2(bb: relax.BlockBuilder, config: T5Config) -> None:
-    bsz = 1
-    seq_len = tvm.tir.Var("n", "int64")
-    with bb.function("encode2"):
-        config.is_decoder = False
-        config.use_cache = False
-
-        # TODO(amalyshe): below embeddings are shared between encoder and decoder, originally it was declared in
-        # T5ForConditionalGeneration but I started to implement from encoder only
-        # and we do not have T5ForConditionalGeneration so far or may be never have it
-        # but we need to create shared embed tokens. Here they are
-        # and due to restrictions of nn.Params, this creation should be called inside
-        # with bb.function...:
-        # that is conflicts with nature of shared param for encoder and decoder
-        shared_embed_tokens = Embedding(config.vocab_size, config.d_model, dtype=config.dtype)
-
-        model = T5Stack(config, shared_embed_tokens)
-        input_ids = nn.Placeholder((bsz, 1), dtype="int32", name="input_ids")
-        attention_mask = nn.Placeholder((bsz, seq_len), dtype="int32", name="attention_mask")
-        with bb.dataflow():
-            last_hidden_state = model(
-                input_ids = input_ids, attention_mask = attention_mask
-            )
-            params = [
-                input_ids,
-                attention_mask,
-            ] + model.parameters()
-            gv = bb.emit_output(last_hidden_state)
-        bb.emit_func_output(gv, params)
-
-    mod = bb.get()
-    gv = mod.get_global_var("encode2")
-    bb.update_func(gv, mod[gv].with_attr("num_input", 2))
-
-
 class T5ForConditionalGenerationRelax(nn.Module):
     def __init__(self, config: T5Config, shared_embed_tokens: Embedding):
         self.config = config
@@ -1088,7 +1053,6 @@ def get_model(args, hf_config):
 
         bb = relax.BlockBuilder()
         create_encoding_func(bb, config)
-        # create_encoding_func2(bb, config)
         create_decoding_first_iter_func(bb, config)
         mod = bb.get()
 
@@ -1098,6 +1062,7 @@ def get_model(args, hf_config):
         # param_list = [param for _, param in hf_model.named_parameters()]
         # i = 0
         # for name, param in hf_model.named_parameters():
+        #     print(name, param.shape)
         #     if i == 21:
         #         print(name, param.shape, param)
         #     i = i + 1

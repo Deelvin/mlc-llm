@@ -86,11 +86,11 @@ def split_transform_deploy_mod(
     mod_transform = tvm.IRModule()
     mod_deploy = tvm.IRModule()
 
-    transform_func_name = None
+    transform_func_name = []
     gv_names = [gv.name_hint for gv in mod.get_global_vars()]
     for name in model_names:
         if name + "_transform_params" in gv_names:
-            transform_func_name = name + "_transform_params"
+            transform_func_name.append(name + "_transform_params")
     assert transform_func_name is not None
 
     for gv in mod.functions:
@@ -98,12 +98,12 @@ def split_transform_deploy_mod(
         if isinstance(func, tvm.tir.PrimFunc):
             mod_transform[gv] = func
             mod_deploy[gv] = func
-        elif gv.name_hint == transform_func_name:
+        elif gv.name_hint in transform_func_name:
             mod_transform[gv] = func
         else:
             mod_deploy[gv] = func
 
-    mod_transform = relax.transform.DeadCodeElimination([transform_func_name])(
+    mod_transform = relax.transform.DeadCodeElimination(transform_func_name)(
         mod_transform
     )
     mod_deploy = relax.transform.DeadCodeElimination(model_names)(mod_deploy)
@@ -154,7 +154,46 @@ def transform_params(
     return res
 
 
-def save_params(params: List[tvm.nd.NDArray], artifact_path: str) -> None:
+def transform_params_independent(
+    mod_transform: tvm.IRModule,
+    transform_func_name: str,
+    model_params: List[tvm.nd.NDArray],
+) -> List[tvm.nd.NDArray]:
+    # Remove the dataflow block inside the param transform function,
+    # so that the LazyTransformParams pass can be applied.
+    mod_transform = relax.transform.ToNonDataflow()(mod_transform)
+    mod_transform = relax.transform.LazyTransformParams()(mod_transform)
+    target = detect_local_target()
+    print(f"Automatically using target for weight quantization: {target}")
+    device = tvm.device(target.kind.default_keys[0])
+
+    @tvm.register_func("get_item", override=True)
+    def get_item(i):
+        print(transform_func_name, "get_item", i, model_params[i].shape)
+        gpu_input = tvm.nd.array(model_params[i], device=device)
+        return gpu_input
+
+    res = []
+
+    @tvm.register_func("set_item", override=True)
+    def set_item(i, value):
+        print(transform_func_name, "set_item", i, value.shape)
+        if len(res) <= i:
+            res.extend([None for _ in range(i - len(res) + 1)])
+        res[i] = tvm.nd.array(value, device=tvm.cpu())
+        return tvm.nd.empty((1,), device=device)
+
+    if target.kind.name != "llvm":
+        with tvm.target.Target(target):
+            mod_transform = tvm.tir.transform.DefaultGPUSchedule()(mod_transform)
+
+    ex = relax.build(mod_transform, target=target)
+    vm = relax.vm.VirtualMachine(ex, device)
+    vm[transform_func_name]()
+    return res
+
+
+def save_params(params: List[tvm.nd.NDArray], artifact_path: str, funcname: str) -> None:
     from tvm.contrib import tvmjs  # pylint: disable=import-outside-toplevel
 
     meta_data = {}
@@ -167,8 +206,12 @@ def save_params(params: List[tvm.nd.NDArray], artifact_path: str) -> None:
         total_size += np_nd.size * np_nd.dtype.itemsize
     total_size = total_size / 1024.0 / 1024.0 / 1024.0
     print(f"Total param size: {total_size} GB")
+    if funcname is None or funcname == '':
+        path = f"{artifact_path}/params"
+    else:
+        path = f"{artifact_path}/params/{funcname}"
     tvmjs.dump_ndarray_cache(
-        param_dict, f"{artifact_path}/params", meta_data=meta_data, encode_format="raw"
+        param_dict, path, meta_data=meta_data, encode_format="raw"
     )
 
 
