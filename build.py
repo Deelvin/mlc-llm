@@ -14,6 +14,93 @@ from mlc_llm import utils
 from mlc_llm.relax_model import gpt_neox, llama, moss, rwkv
 
 
+####################################################################################################
+import tvm.testing
+import numpy as np
+from tvm.script import relax as R, ir as I, tir as T
+from transformers import AutoTokenizer
+
+RUN_SMOOTH_QUANT=True
+
+def _get_simple_model_fp16(device):
+    @I.ir_module
+    class Linear:
+        @R.function
+        def main(
+            data: R.Tensor((1, "n", 11008), "float16"),
+            weight: R.Tensor((4096, 11008), "float16"),
+        ) -> R.Tensor((1, "n", 4096), "float16"):
+            R.func_attr({"num_input": 1})
+            with R.dataflow():
+                out = R.linear(data, weight)
+                R.output(out)
+            return out
+
+    npw = np.random.randn(4096, 11008).astype("float16")
+    params = tvm.nd.array(npw, device)
+
+    return Linear, [params]
+
+def _get_simple_model_int8(device):
+    @I.ir_module
+    class Linear:
+        @R.function
+        def main(
+            data: R.Tensor((1, "n", 11008), "int8"),
+            weight: R.Tensor((4096, 11008), "int8"),
+        ) -> R.Tensor((1, "n", 4096), "int32"):
+            R.func_attr({"num_input": 1})
+            with R.dataflow():
+                out = R.linear(data, weight)
+                R.output(out)
+            return out
+
+    npw = np.random.randn(4096, 11008).astype("int8")
+    params = tvm.nd.array(npw, device)
+
+    return Linear, [params]
+
+
+def _get_vicuna_dataset(args, device, num=3):
+    prompts_dataset = [
+        "The capital of Canada is",
+        "2+2=?",
+        "What is the capital of Russia?",
+        "Who is the president of the USA?",
+    ]
+
+    """
+    Output of tokenizer:
+    [1, 450, 7483, 310, 7400, 338]
+    [1, 29871, 29906, 29974, 29906, 29922, 29973]
+    [1, 1724, 338, 278, 7483, 310, 12710, 29973]
+    [1, 11644, 338, 278, 6673, 310, 278, 8278, 29973]
+    """
+
+    dataset = []
+    print("Tokenizing of SmoothQuant dataset...")
+    tokenizer = AutoTokenizer.from_pretrained(
+        os.path.join(args.artifact_path, "params"), trust_remote_code=True
+    )
+    for prompt in prompts_dataset:
+        prompt_tokens = tokenizer.encode(prompt)
+        num = len(prompt_tokens)
+        data = (
+            tvm.nd.array(np.array([prompt_tokens]).astype("int32"), device=device),
+            tvm.runtime.ShapeTuple([num]),
+            tvm.nd.array(np.array([[prompt_tokens[1]]]).astype("int32"), device=device),
+            tvm.runtime.ShapeTuple([num + 1]),
+        )
+        dataset.append(data)
+
+    return dataset
+
+
+def _get_simple_model_dataset(device):
+    return [tvm.nd.array(np.random.randn(1, 7, 11008).astype("float16"), device)]
+
+####################################################################################################
+
 def _parse_args():
     args = argparse.ArgumentParser()
     args.add_argument(
@@ -241,6 +328,8 @@ def mod_transform_before_build(
             "get_metadata",
         ]
 
+    #model_names = ["main"]
+
     if args.quantization.mode != "no":
         if ARGS.model.startswith("rwkv-"):
             mod = mlc_llm.transform.RWKVQuantize(  # pylint: disable=not-callable
@@ -267,13 +356,16 @@ def mod_transform_before_build(
     debug_dump_script(mod_transform, "mod_lift_params.py", args)
     debug_dump_script(mod_deploy, "mod_deploy.py", args)
 
-    new_params = utils.transform_params(mod_transform, model_params)
-    utils.save_params(new_params, args.artifact_path)
+    new_params_dict = utils.transform_params(mod_transform, model_params)
+    for func_name, new_params in new_params_dict.items():
+        utils.save_params(new_params, os.path.join(args.artifact_path, "params", func_name))
     return mod_deploy
 
 
 def dump_default_mlc_chat_config(args):
     params_path = os.path.join(args.artifact_path, "params")
+    if not os.path.exists(params_path):
+        os.makedirs(params_path)
     config: Dict[str, Any] = {}
 
     if args.reuse_lib:
@@ -372,6 +464,7 @@ def main():
     ARGS.raw_params_path = os.path.join(ARGS.artifact_path, "raw_params")
     use_cache = ARGS.use_cache and os.path.isfile(cache_path)
     with open(os.path.join(ARGS.model_path, "config.json"), encoding="utf-8") as i_f:
+        dump_default_mlc_chat_config(ARGS)
         config = json.load(i_f)
         if not use_cache:
             if ARGS.model_category == "llama":
@@ -384,6 +477,26 @@ def main():
                 mod, params = rwkv.get_model(ARGS, config)
             else:
                 raise ValueError(f"Model {ARGS.model} not supported")
+
+            #mod, params = _get_simple_model_fp16(tvm.cuda(0))
+
+            if RUN_SMOOTH_QUANT is True:
+                print("\n## Start ####################################\n")
+                sq_target = ARGS.target
+                #sq_target = tvm.target.Target("llvm", host="llvm")
+                #sq_dev = tvm.device(ARGS.target_kind)
+
+                #dataset = _get_simple_model_dataset(device=tvm.device(sq_target.kind.default_keys[0]))
+                dataset = _get_vicuna_dataset(ARGS, device=tvm.device(sq_target.kind.default_keys[0]))
+
+                with sq_target, relax.quantize.sqconfig():
+                    funcs = ["create_kv_cache", "prefill", "decode", "softmax_with_temperature", "get_metadata"]
+                    #funcs = ["main"]
+                    mod = relax.quantize.smooth(mod, params, funcs, dataset, extra_passes=mlc_llm.transform.FuseTransposeMatmul())
+                    mod = relax.quantize.quantize(mod, params, funcs, dataset, extra_passes=mlc_llm.transform.FuseTransposeMatmul())
+
+                print("\n## End ####################################\n")
+
             mod = mod_transform_before_build(mod, params, ARGS)
             with open(cache_path, "wb") as outfile:
                 pickle.dump(mod, outfile)
@@ -401,9 +514,9 @@ def main():
             build(mod, ARGS)
         else:
             print("Reuse existing prebuilt lib {ARGS.reuse_lib}...")
-        dump_default_mlc_chat_config(ARGS)
 
 
 if __name__ == "__main__":
     ARGS = _parse_args()
     main()
+    print("!!!!! Strange AssertionError...")

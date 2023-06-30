@@ -693,7 +693,8 @@ def get_model(args, hf_config):
 
         mod = bb.get()
 
-        device = tvm.cpu()
+        #device = tvm.cpu()
+        device = tvm.cuda()
         hf_model = AutoModelForCausalLM.from_pretrained(model_path)
         # Get a list of parameters in advance, then delete the model to save memory
         param_list = [param for _, param in hf_model.named_parameters()]

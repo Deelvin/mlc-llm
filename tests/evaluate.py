@@ -82,7 +82,11 @@ def print_as_table(sorted_list: List[Tuple[str, Tuple[float, int]]]):
 
 def deploy_to_pipeline(args) -> None:
     device = tvm.device(args.device_name)
-    const_params = utils.load_params(args.artifact_path, device)
+    #const_params = utils.load_params(args.artifact_path, device)
+    path = os.path.join(args.artifact_path, "params", "prefill_transform_params")
+    prefill_const_params = utils.load_params(path, device)
+    path = os.path.join(args.artifact_path, "params", "decode_transform_params")
+    decode_const_params = utils.load_params(path, device)
     ex = tvm.runtime.load_module(
         os.path.join(
             args.artifact_path,
@@ -106,26 +110,26 @@ def deploy_to_pipeline(args) -> None:
     kv_caches = vm["create_kv_cache"]()
     # skip warm up
 
-    logits, kv_caches = vm["prefill"](inputs, seq_len_shape, kv_caches, const_params)
+    logits, kv_caches = vm["prefill"](inputs, seq_len_shape, kv_caches, prefill_const_params)
     logits, kv_caches = vm["decode"](
-        first_sampled_token, second_seq_len_shape, kv_caches, const_params
+        first_sampled_token, second_seq_len_shape, kv_caches, decode_const_params
     )
     device.sync()
 
     kv_caches = vm["create_kv_cache"]()
     print("Running inference...")
     start = time.time()
-    logits, kv_caches = vm["prefill"](inputs, seq_len_shape, kv_caches, const_params)
+    logits, kv_caches = vm["prefill"](inputs, seq_len_shape, kv_caches, prefill_const_params)
     device.sync()
     encoding_end = time.time()
     logits, kv_caches = vm["decode"](
-        first_sampled_token, second_seq_len_shape, kv_caches, const_params
+        first_sampled_token, second_seq_len_shape, kv_caches, decode_const_params
     )
     device.sync()
     end = time.time()
-    fcache_view = tvm.get_global_func("vm.builtin.attention_kv_cache_view")
-    first_k_cache = fcache_view(kv_caches[0], ShapeTuple([7, 32, 128]))
     if args.debug_dump:
+        fcache_view = tvm.get_global_func("vm.builtin.attention_kv_cache_view")
+        first_k_cache = fcache_view(kv_caches[0], ShapeTuple([7, 32, 128]))
         print(f"output kv_cache[0]:\n{first_k_cache.numpy().transpose(1, 0, 2)}")
         print(f"output logits:\n{logits.numpy()}")
     print(
@@ -140,7 +144,7 @@ def deploy_to_pipeline(args) -> None:
         kv_caches = vm["create_kv_cache"]()
 
         logits, kv_caches = vm["prefill"](
-            inputs, seq_len_shape, kv_caches, const_params
+            inputs, seq_len_shape, kv_caches, prefill_const_params
         )
         print("======================= Encoding Profiling =======================")
         print_as_table(
@@ -152,7 +156,7 @@ def deploy_to_pipeline(args) -> None:
         cmp_instrument.time_eval_results.clear()
 
         logits, kv_caches = vm["decode"](
-            first_sampled_token, second_seq_len_shape, kv_caches, const_params
+            first_sampled_token, second_seq_len_shape, kv_caches, decode_const_params
         )
         print("======================= Decoding Profiling =======================")
         print_as_table(
