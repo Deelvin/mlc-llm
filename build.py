@@ -480,6 +480,8 @@ def main():
 
             #mod, params = _get_simple_model_fp16(tvm.cuda(0))
 
+            utils.copy_tokenizer(ARGS)
+
             if RUN_SMOOTH_QUANT is True:
                 print("\n## Start ####################################\n")
                 sq_target = ARGS.target
@@ -501,7 +503,6 @@ def main():
             with open(cache_path, "wb") as outfile:
                 pickle.dump(mod, outfile)
             print(f"Save a cached module to {cache_path}.")
-            utils.copy_tokenizer(ARGS)
         else:
             print(
                 f"Load cached module from {cache_path} and skip tracing. "
