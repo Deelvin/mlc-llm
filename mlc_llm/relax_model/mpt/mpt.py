@@ -649,8 +649,6 @@ class MPTModel(nn.Module):
       prefix_mask: Optional[relax.Expr]=None,
       sequence_id: Optional[relax.Expr]=None,
       return_dict: Optional[bool]=None,
-      output_attentions: Optional[bool]=None,
-      output_hidden_states: Optional[bool]=None,
       use_cache: Optional[bool]=None
   ):
     return_dict = return_dict if return_dict is not None else self.return_dict
@@ -668,9 +666,6 @@ class MPTModel(nn.Module):
       prefix_mask = nn.emit(relax.op.astype(prefix_mask, "bool"))
     if not return_dict:
       raise NotImplementedError('return_dict False is not implemented yet for MPT')
-    if output_attentions:
-      if self.attn_impl != 'torch':
-        raise NotImplementedError('output_attentions is not implemented for MPT when using attn_impl `flash` or `triton`.')
     if self.prefix_lm and prefix_mask is None:
       raise ValueError('prefix_mask is a required argument when MPT is configured with prefix_lm=True.')
 
@@ -702,24 +697,14 @@ class MPTModel(nn.Module):
     (attn_bias, attention_mask) = self._attn_bias(dtype=x.struct_info.dtype, attention_mask=attention_mask, prefix_mask=prefix_mask, sequence_id=sequence_id)
     if use_cache and past_key_values is None:
       past_key_values = [() for _ in range(self.n_layers)]
-    all_hidden_states = () if output_hidden_states else None
-    all_self_attns = () if output_attentions else None
     for (b_idx, block) in enumerate(self.blocks):
-      if output_hidden_states:
-        assert all_hidden_states is not None
-        all_hidden_states = all_hidden_states + (x,)
       past_key_value = past_key_values[b_idx] if past_key_values is not None else None
-      (x, attn_weights, past_key_value) = block(x, past_key_value=past_key_value, attn_bias=attn_bias, attention_mask=attention_mask, is_causal=self.is_causal)
+      # TODO: reimplement output of block
+      (x, _, past_key_value) = block(x, past_key_value=past_key_value, attn_bias=attn_bias, attention_mask=attention_mask, is_causal=self.is_causal)
       if past_key_values is not None:
         past_key_values[b_idx] = past_key_value
-      if output_attentions:
-        assert all_self_attns is not None
-        all_self_attns = all_self_attns + (attn_weights,)
     # x = self.norm_f(x)
-    if output_hidden_states:
-      assert all_hidden_states is not None
-      all_hidden_states = all_hidden_states + (x,)
-    return x, past_key_values, all_hidden_states, all_self_attns
+    return x, past_key_values
 
 
 class MPTForCausalLM(nn.Module):
@@ -740,8 +725,6 @@ class MPTForCausalLM(nn.Module):
       prefix_mask: Optional[relax.Expr]=None,
       sequence_id: Optional[relax.Expr]=None,
       return_dict: Optional[bool]=None,
-      output_attentions: Optional[bool]=None,
-      output_hidden_states: Optional[bool]=None,
       use_cache: Optional[bool]=None
   ):
     return_dict = return_dict if return_dict is not None else self.return_dict
@@ -760,8 +743,6 @@ class MPTForCausalLM(nn.Module):
         prefix_mask=prefix_mask,
         sequence_id=sequence_id,
         return_dict=return_dict,
-        output_attentions=output_attentions,
-        output_hidden_states=output_hidden_states,
         use_cache=use_cache
     )
 
