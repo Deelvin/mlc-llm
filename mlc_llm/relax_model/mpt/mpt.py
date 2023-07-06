@@ -460,8 +460,8 @@ class MPTBlock(nn.Module):
 
     # Fully Connected
     hidden_states = self.post_attention_layernorm(residual)
-    hidden_states = self.mlp(hidden_states)
-    hidden_states = nn.emit(residual + hidden_states)
+    # hidden_states = self.mlp(hidden_states)
+    # hidden_states = nn.emit(residual + hidden_states)
 
     return (hidden_states, attn_weights, present_key_value)
 
