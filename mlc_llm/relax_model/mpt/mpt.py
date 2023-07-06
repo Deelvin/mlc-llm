@@ -445,25 +445,25 @@ class MPTBlock(nn.Module):
       attention_mask: Optional[relax.Expr] = None,
       is_causal: bool=True,
   ) -> Tuple[relax.Expr, relax.Expr, Optional[Tuple[relax.Expr, relax.Expr]]]:
-    residual = hidden_states
-    hidden_states = self.input_layernorm(hidden_states)
+    # residual = hidden_states
+    # hidden_states = self.input_layernorm(hidden_states)
 
-    # Self Attention
-    (hidden_states, attn_weights, present_key_value) = self.self_attn(
-      hidden_states,
-      past_key_value=past_key_value,
-      attn_bias=attn_bias,
-      attention_mask=attention_mask,
-      is_causal=is_causal
-    )
-    residual = nn.emit(residual + hidden_states)
+    # # Self Attention
+    # (hidden_states, attn_weights, present_key_value) = self.self_attn(
+    #   hidden_states,
+    #   past_key_value=past_key_value,
+    #   attn_bias=attn_bias,
+    #   attention_mask=attention_mask,
+    #   is_causal=is_causal
+    # )
+    # residual = nn.emit(residual + hidden_states)
 
     # Fully Connected
-    hidden_states = self.post_attention_layernorm(residual)
+    # hidden_states = self.post_attention_layernorm(residual)
     # hidden_states = self.mlp(hidden_states)
     # hidden_states = nn.emit(residual + hidden_states)
 
-    return (hidden_states, attn_weights, present_key_value)
+    return (hidden_states, None, None) # (hidden_states, attn_weights, present_key_value)
 
 
 def attn_bias_shape(attn_impl, n_heads, seq_len, alibi, prefix_lm, causal, use_sequence_id):
