@@ -147,9 +147,8 @@ def scaled_multihead_dot_product_attention(
   attn_weight = nn.emit(relax.op.nn.softmax(attn_weight))
   out = nn.emit(relax.op.matmul(attn_weight, v))
   out = reverse_reshape_and_permute(out)
-  if needs_weights:
-    return (out, attn_weight, past_key_value)
-  return (out, None, past_key_value)
+
+  return (out, past_key_value)
 
 ######################### FLASH ATTENTION IMPLEMENTATION TYPE TORCH (END) ##########################
 
@@ -367,7 +366,7 @@ class MultiheadAttention(nn.Module):
     # TODO: Does field _is_residual exist?
     # self.out_proj._is_residual = True
 
-  def forward(self, x, past_key_value=None, attn_bias=None, attention_mask=None, is_causal=True, needs_weights=False):
+  def forward(self, x, past_key_value=None, attn_bias=None, attention_mask=None, is_causal=True):
     qkv = self.Wqkv(x)
     if self.clip_qkv:
       qkv = nn.emit(relax.op.clip(qkv, min=relax.const(-self.clip_qkv), max=relax.const(self.clip_qkv)))
@@ -391,9 +390,9 @@ class MultiheadAttention(nn.Module):
         attn_bias=attn_bias,
         key_padding_mask=key_padding_mask,
         is_causal=is_causal,
-        needs_weights=needs_weights
+        needs_weights=False,
     )
-    return (attn_out[1], attn_out[1], attn_out[2]) # (self.out_proj(attn_out[0]), attn_out[1], attn_out[2])
+    return (attn_out[1], attn_out[1]) # (self.out_proj(attn_out[0]), attn_out[1])
 
 ATTN_CLASS_REGISTRY = {'multihead_attention': MultiheadAttention}
 
@@ -447,7 +446,7 @@ class MPTBlock(nn.Module):
     hidden_states = self.input_layernorm(hidden_states) # TODO: debug comment: not nan
 
     # Self Attention
-    (hidden_states, attn_weights, present_key_value) = self.self_attn(
+    (hidden_states, present_key_value) = self.self_attn(
       hidden_states,
       past_key_value=past_key_value,
       attn_bias=attn_bias,
@@ -461,7 +460,7 @@ class MPTBlock(nn.Module):
     # hidden_states = self.mlp(hidden_states)
     # hidden_states = nn.emit(residual + hidden_states)
 
-    return (hidden_states, attn_weights, present_key_value)
+    return (hidden_states, present_key_value)
 
 
 def attn_bias_shape(attn_impl, n_heads, seq_len, alibi, prefix_lm, causal, use_sequence_id):
@@ -700,7 +699,7 @@ class MPTModel(nn.Module):
         break
       past_key_value = past_key_values[b_idx] if past_key_values is not None else None
       # TODO: reimplement output of block
-      (x, _, past_key_value) = block(x, past_key_value=past_key_value, attn_bias=attn_bias, attention_mask=attention_mask, is_causal=self.is_causal)
+      (x, past_key_value) = block(x, past_key_value=past_key_value, attn_bias=attn_bias, attention_mask=attention_mask, is_causal=self.is_causal)
       if past_key_values is not None:
         past_key_values[b_idx] = past_key_value
     # x = self.norm_f(x)
