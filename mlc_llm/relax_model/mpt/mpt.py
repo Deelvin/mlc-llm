@@ -331,8 +331,7 @@ class MultiheadAttention(nn.Module):
       attn_impl: str='triton',
       clip_qkv: Optional[float]=None,
       qk_ln: bool=False,
-      softmax_scale: Optional[float]=None,
-      low_precision_layernorm: bool=False
+      softmax_scale: Optional[float]=None
   ):
     # Init fields
     self.d_model = d_model
@@ -348,9 +347,8 @@ class MultiheadAttention(nn.Module):
     fuse_splits = (d_model, 2 * d_model)
     self.Wqkv._fused = (0, fuse_splits)
     if self.qk_ln:
-      layernorm_class = LPLayerNormWOBias if low_precision_layernorm else LayerNorm
-      self.q_ln = layernorm_class(self.d_model, dtype)
-      self.k_ln = layernorm_class(self.d_model, dtype)
+      self.q_ln = LayerNorm(self.d_model, dtype)
+      self.k_ln = LayerNorm(self.d_model, dtype)
     if self.attn_impl == 'flash':
       self.attn_fn = flash_attn_fn
     elif self.attn_impl == 'triton':
