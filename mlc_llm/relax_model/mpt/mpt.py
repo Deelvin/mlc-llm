@@ -445,8 +445,8 @@ class MPTBlock(nn.Module):
       attention_mask: Optional[relax.Expr] = None,
       is_causal: bool=True,
   ) -> Tuple[relax.Expr, relax.Expr, Optional[Tuple[relax.Expr, relax.Expr]]]:
-    # residual = hidden_states
-    # hidden_states = self.input_layernorm(hidden_states)
+    residual = hidden_states
+    hidden_states = self.input_layernorm(hidden_states)
 
     # # Self Attention
     # (hidden_states, attn_weights, present_key_value) = self.self_attn(
