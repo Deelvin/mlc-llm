@@ -363,7 +363,6 @@ class MultiheadAttention(nn.Module):
     else:
       raise ValueError(f'attn_impl={attn_impl!r} is an invalid setting.')
     self.out_proj = Linear(self.d_model, self.d_model, dtype, bias=False)
-    print("SELF OUT PROJ WEIGHTS: ", self.out_proj.weight)
     # TODO: Does field _is_residual exist?
     # self.out_proj._is_residual = True
 

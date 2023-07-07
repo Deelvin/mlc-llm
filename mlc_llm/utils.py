@@ -231,7 +231,7 @@ def transform_params(
 
                 if not raw_param.flags['C_CONTIGUOUS']:
                     print("NON_CONTIGUOUS TENSOR WAS FOUND:", torch_param_name)
-                print("MLC PARAM NAMES:", pname2pidx.keys())
+                print("MLC PARAM NAMES:", pname2pidx)
                 for param_name, param in f_convert_param_bkwd(
                     torch_param_name, raw_param
                 ):
