@@ -136,7 +136,6 @@ def load_torch_pname2binname_map(
         with open(bin_idx_path, "r") as f_torch_json:
             torch_bin_json = json.load(f_torch_json)
             pname2binname = torch_bin_json["weight_map"]
-            print("PNAMES-BINNAMES:", pname2binname)
     else:
         # Single weight shard.
         single_shard_path = os.path.join(model_path, "pytorch_model.bin")
@@ -232,6 +231,7 @@ def transform_params(
 
                 if not raw_param.flags['C_CONTIGUOUS']:
                     print("NON_CONTIGUOUS TENSOR WAS FOUND:", torch_param_name)
+                print("MLC PARAM NAMES:", pname2pidx.keys())
                 for param_name, param in f_convert_param_bkwd(
                     torch_param_name, raw_param
                 ):
