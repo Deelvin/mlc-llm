@@ -275,7 +275,12 @@ class LLMChat {
         tvm::runtime::Registry::Get("vm.builtin.param_array_from_cache");
     ICHECK(fload_params) << "Cannot find env function vm.builtin.param_array_from_cache";
     params_ = (*fload_params)("param", -1);
-    PrintNDArray(params_[2], 100, "MLC PARAM");
+    size_t param_size = params_.size();
+    std::cout << "PARAMS SIZE = " << param_size << std::endl;
+    for (size_t i = 0; i < param_size; ++i) {
+      std::cout << "MLC PARAM " << i << std::endl;
+      PrintNDArray(params_[i], 100);
+    }
 
     // after we get params, it is safe to simply clear the cached version
     // as these params are referenced by params_
