@@ -605,15 +605,15 @@ class LLMChat {
               << "decoding-time=" << decoding_ms << "ms.";
   }
 
-void PrintNDArray(NDArray array, int num = -1, std::string tensor_tag = "Tensor") {
+void PrintNDArray(NDArray array, int64_t num = -1, std::string tensor_tag = "Tensor") {
   size_t ndim = array->ndim;
-  size_t numel = 1;
+  int64_t numel = 1;
   // Print shape and calculate numel
   std::ostringstream os_shape;
   for (size_t i = 0; i < ndim; ++i) {
     if (i != 0) os_shape << ", ";
-    numel *= logits_on_cpu_->shape[i];
-    os_shape << logits_on_cpu_->shape[i];
+    numel *= array->shape[i];
+    os_shape << array->shape[i];
   }
 
   std::string num_tag = std::to_string(num);
@@ -625,10 +625,10 @@ void PrintNDArray(NDArray array, int num = -1, std::string tensor_tag = "Tensor"
   std::cout << tensor_tag << " shape = [" << os_shape.str() << "]" << std::endl;
   // LOG(INFO) << tensor_tag << " shape = [" << os_shape.str() << "]";
 
-  // Print specified number of values from logits
+  // Print specified number of values from tensor
   std::ostringstream os;
-  const float* p_data = static_cast<float*>(logits_on_cpu_->data);
-  for (int i = 0; i < num; ++i) {
+  const float* p_data = static_cast<float*>(array->data);
+  for (int64_t i = 0; i < num; ++i) {
     if (i != 0) os << ", ";
     os << p_data[i];
   }
