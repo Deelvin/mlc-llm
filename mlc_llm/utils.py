@@ -236,6 +236,7 @@ def transform_params(
                     torch_param_name, raw_param
                 ):
                     if param_name == "transformer.blocks.0.self_attn.out_proj.weight":
+                        print("PARAM SHAPE from HF:", raw_param.shape)
                         print("PARAM from HF:", raw_param)
                     if param_name in pname2pidx.keys():
                         assert pname2pidx[param_name] not in loaded_params_dict
