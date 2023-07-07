@@ -136,6 +136,7 @@ def load_torch_pname2binname_map(
         with open(bin_idx_path, "r") as f_torch_json:
             torch_bin_json = json.load(f_torch_json)
             pname2binname = torch_bin_json["weight_map"]
+            print("PNAMES-BINNAMES:", pname2binname)
     else:
         # Single weight shard.
         single_shard_path = os.path.join(model_path, "pytorch_model.bin")
