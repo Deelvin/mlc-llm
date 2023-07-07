@@ -610,37 +610,45 @@ class LLMChat {
               << "decoding-time=" << decoding_ms << "ms.";
   }
 
-void PrintNDArray(NDArray array, int64_t num = -1, std::string tensor_tag = "Tensor") {
-  size_t ndim = array->ndim;
-  int64_t numel = 1;
-  // Print shape and calculate numel
-  std::ostringstream os_shape;
-  for (size_t i = 0; i < ndim; ++i) {
-    if (i != 0) os_shape << ", ";
-    numel *= array->shape[i];
-    os_shape << array->shape[i];
-  }
+  void PrintNDArray(NDArray array, int64_t num = -1, std::string tensor_tag = "Tensor") const {
+    // Check that the data on CPU and copy if need
+    NDArray array_cpu;
+    if (array->device.device_type != kDLCPU) {
+      array_cpu = array.CopyTo(DLDevice{kDLCPU, 0});
+    } else {
+      array_cpu.CopyFrom(array);
+    }
+    TVMSynchronize(device_.device_type, device_.device_id, nullptr);
+    size_t ndim = array_cpu->ndim;
+    int64_t numel = 1;
+    // Print shape and calculate numel
+    std::ostringstream os_shape;
+    for (size_t i = 0; i < ndim; ++i) {
+      if (i != 0) os_shape << ", ";
+      numel *= array_cpu->shape[i];
+      os_shape << array_cpu->shape[i];
+    }
 
-  std::string num_tag = std::to_string(num);
-  if (num == -1 || num >= numel) {
-    num = numel;
-    num_tag = "";
-  }
-  // TODO(vchernov): after test return LOG(INFO)
-  std::cout << tensor_tag << " shape = [" << os_shape.str() << "]" << std::endl;
-  // LOG(INFO) << tensor_tag << " shape = [" << os_shape.str() << "]";
+    std::string num_tag = std::to_string(num);
+    if (num == -1 || num >= numel) {
+      num = numel;
+      num_tag = "";
+    }
+    // TODO(vchernov): after test return LOG(INFO)
+    std::cout << tensor_tag << " shape = [" << os_shape.str() << "]" << std::endl;
+    // LOG(INFO) << tensor_tag << " shape = [" << os_shape.str() << "]";
 
-  // Print specified number of values from tensor
-  std::ostringstream os;
-  const float* p_data = static_cast<float*>(array->data);
-  for (int64_t i = 0; i < num; ++i) {
-    if (i != 0) os << ", ";
-    os << p_data[i];
+    // Print specified number of values from tensor
+    std::ostringstream os;
+    const float* p_data = static_cast<float*>(array_cpu->data);
+    for (int64_t i = 0; i < num; ++i) {
+      if (i != 0) os << ", ";
+      os << p_data[i];
+    }
+    // TODO(vchernov): after test return LOG(INFO)
+    std::cout << tensor_tag << "[:" << num_tag << "] = [" << os.str() << "]" << std::endl;
+    // LOG(INFO) << tensor_tag << "[:" << num_tag << "] = [" << os.str() << "]";
   }
-  // TODO(vchernov): after test return LOG(INFO)
-  std::cout << tensor_tag << "[:" << num_tag << "] = [" << os.str() << "]" << std::endl;
-  // LOG(INFO) << tensor_tag << "[:" << num_tag << "] = [" << os.str() << "]";
-}
 
  private:
   picojson::value SerializeConfigToJSONValue() const {
