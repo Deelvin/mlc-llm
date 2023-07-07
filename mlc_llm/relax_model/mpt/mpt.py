@@ -395,7 +395,7 @@ class MultiheadAttention(nn.Module):
         is_causal=is_causal,
         needs_weights=needs_weights
     )
-    return (key, attn_out[1], attn_out[2]) # (self.out_proj(attn_out[0]), attn_out[1], attn_out[2])
+    return (value, attn_out[1], attn_out[2]) # (self.out_proj(attn_out[0]), attn_out[1], attn_out[2])
 
 ATTN_CLASS_REGISTRY = {'multihead_attention': MultiheadAttention}
 
