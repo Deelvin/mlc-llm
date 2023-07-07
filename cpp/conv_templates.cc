@@ -299,13 +299,13 @@ Conversation MPT() {
   Conversation conv;
   conv.name = "mpt";
   conv.system = "";
-  conv.roles = {"client", "instructor"};
+  conv.roles = {"", ""};
   conv.messages = {};
   conv.separator_style = SeparatorStyle::kSepRoleMsg;
   conv.offset = 0;
   conv.seps = {"\n"};
-  conv.role_msg_sep = ": ";
-  conv.role_empty_sep = "?";
+  conv.role_msg_sep = "";
+  conv.role_empty_sep = "";
   // TODO(mlc-team): add eos to mlc-chat-config
   // and remove eos from stop token setting.
   conv.stop_tokens = {0};
