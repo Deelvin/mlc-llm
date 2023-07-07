@@ -306,10 +306,10 @@ Conversation MPT() {
   conv.seps = {"\n"};
   conv.role_msg_sep = ": ";
   conv.role_empty_sep = "?";
-  conv.stop_str = "stop";
   // TODO(mlc-team): add eos to mlc-chat-config
   // and remove eos from stop token setting.
   conv.stop_tokens = {0};
+  conv.stop_str = "<|endoftext|>";
   conv.add_bos = false;
   return conv;
 }
