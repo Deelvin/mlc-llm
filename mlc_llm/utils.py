@@ -219,6 +219,7 @@ def transform_params(
             )
 
             torch_param_names = list(torch_params.keys())
+            # print("MLC PARAM NAMES:", pname2pidx)
             for torch_param_name in torch_param_names:
                 if str(torch_params[torch_param_name].dtype) == "torch.bfloat16":
                     # Convert to float32 first.
@@ -231,7 +232,6 @@ def transform_params(
 
                 if not raw_param.flags['C_CONTIGUOUS']:
                     print("NON_CONTIGUOUS TENSOR WAS FOUND:", torch_param_name)
-                print("MLC PARAM NAMES:", pname2pidx)
                 for param_name, param in f_convert_param_bkwd(
                     torch_param_name, raw_param
                 ):
@@ -295,7 +295,10 @@ def load_params(artifact_path: str, device) -> List[tvm.nd.NDArray]:
     params, meta = tvmjs.load_ndarray_cache(f"{artifact_path}/params", device)
     plist = []
     size = meta["ParamSize"]
+    print("META:", meta)
     for i in range(size):
+        if i == 2:
+            print("PARAM FROM BIN:", params[f"param_{i}"])
         plist.append(params[f"param_{i}"])
     return plist
 
