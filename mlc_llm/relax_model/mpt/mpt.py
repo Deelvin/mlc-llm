@@ -392,7 +392,7 @@ class MultiheadAttention(nn.Module):
         is_causal=is_causal,
         needs_weights=False,
     )
-    return (self.out_proj(attn_out[0]), attn_out[1])
+    return (attn_out[0], attn_out[1]) # (self.out_proj(attn_out[0]), attn_out[1])
 
 ATTN_CLASS_REGISTRY = {'multihead_attention': MultiheadAttention}
 
@@ -749,8 +749,8 @@ class MPTForCausalLM(nn.Module):
     logits = outputs[0]
     # logits = nn.emit(relax.op.linear(outputs[0], self.transformer.wte.weight))
 
-    if logits.struct_info.dtype != "float32":
-      logits = nn.emit(relax.op.astype(logits, "float32"))
+    # if logits.struct_info.dtype != "float32":
+    #   logits = nn.emit(relax.op.astype(logits, "float32"))
 
     return logits, outputs[1]
 
