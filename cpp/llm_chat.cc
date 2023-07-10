@@ -819,7 +819,7 @@ class LLMChat {
       logits_on_cpu_.CopyFrom(logits_or_prob);
     }
     TVMSynchronize(device_.device_type, device_.device_id, nullptr);
-    PrintNDArray(logits_on_cpu_, 10, "Logits");
+    PrintNDArray(logits_on_cpu_, 100, "Logits");
   }
 
   // Clear kv cache
