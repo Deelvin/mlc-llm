@@ -618,6 +618,7 @@ class LLMChat {
       NDArray array_cpu;
       array_cpu = array.CopyTo(DLDevice{kDLCPU, 0});
       TVMSynchronize(device_.device_type, device_.device_id, nullptr);
+      return array_cpu;
     } else {
       std::cout << "Copy inside CPU" << std::endl;
       return array;
