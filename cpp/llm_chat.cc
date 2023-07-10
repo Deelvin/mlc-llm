@@ -614,8 +614,10 @@ class LLMChat {
     // Check that the data on CPU and copy if need
     NDArray array_cpu;
     if (array->device.device_type != kDLCPU) {
+      std::cout << "Copy to CPU" << std::endl;
       array_cpu = array.CopyTo(DLDevice{kDLCPU, 0});
     } else {
+      std::cout << "Copy inside CPU" << std::endl;
       array_cpu.CopyFrom(array);
     }
     TVMSynchronize(device_.device_type, device_.device_id, nullptr);
