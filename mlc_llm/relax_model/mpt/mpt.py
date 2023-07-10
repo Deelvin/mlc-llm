@@ -117,6 +117,7 @@ def scaled_multihead_dot_product_attention(
   attn_weight = nn.emit(relax.op.matmul(q, k) * softmax_scale)
   _, _, s_q_end, s_k_end = attn_bias.struct_info.shape
   if attn_bias is not None:
+    print("USE ATTN BIAS")
     _s_q = np.maximum(0, s_q_end - s_q)
     _s_k = np.maximum(0, s_k_end - s_k)
     # slicing attn_bias[:, :, _s_q:, _s_k:]
@@ -129,6 +130,7 @@ def scaled_multihead_dot_product_attention(
     attn_weight = attn_weight + attn_bias
   min_val = get_type_min_val(q)
   if key_padding_mask is not None:
+    print("USE KEY MASK")
     if attn_bias is not None:
       warnings.warn('Propogating key_padding_mask to the attention module ' + 'and applying it within the attention module can cause ' + 'unneccessary computation/memory usage. Consider integrating ' + 'into attn_bias once and passing that to each attention ' + 'module instead.')
     key_mask = nn.emit(relax.op.bitwise_not(relax.op.reshape(key_padding_mask, (b, 1, 1, s_k))))
