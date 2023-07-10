@@ -127,7 +127,7 @@ def scaled_multihead_dot_product_attention(
         (attn_bias.struct_info.shape[-2] != 1 and
           attn_bias.struct_info.shape[-2] != s_q)): # dynamic condition?
       raise RuntimeError(f'attn_bias (shape: {attn_bias.struct_info.shape}) is expected to broadcast to shape: {attn_weight.struct_info.shape}.')
-    attn_weight = attn_weight + attn_bias
+    # attn_weight = attn_weight + attn_bias
   min_val = get_type_min_val(q)
   if key_padding_mask is not None:
     print("USE KEY MASK")
