@@ -610,17 +610,23 @@ class LLMChat {
               << "decoding-time=" << decoding_ms << "ms.";
   }
 
-  void PrintNDArray(NDArray array, int64_t num = -1, std::string tensor_tag = "Tensor") const {
+  NDArray getArrayToPrint(NDArray array) const {
+    ICHECK(array->data != nullptr) << "Array data is nullptr";
     // Check that the data on CPU and copy if need
-    NDArray array_cpu;
     if (array->device.device_type != kDLCPU) {
       std::cout << "Copy to CPU" << std::endl;
+      NDArray array_cpu;
       array_cpu = array.CopyTo(DLDevice{kDLCPU, 0});
+      TVMSynchronize(device_.device_type, device_.device_id, nullptr);
     } else {
       std::cout << "Copy inside CPU" << std::endl;
-      array_cpu.CopyFrom(array);
+      return array;
     }
-    TVMSynchronize(device_.device_type, device_.device_id, nullptr);
+  }
+
+  void PrintNDArray(NDArray array, int64_t num = -1, std::string tensor_tag = "Tensor") const {
+    NDArray array_cpu = getArrayToPrint(array);
+
     size_t ndim = array_cpu->ndim;
     int64_t numel = 1;
     // Print shape and calculate numel
