@@ -152,7 +152,7 @@ def scaled_multihead_dot_product_attention(
   out = reverse_reshape_and_permute(out)
 
   art_out = nn.emit(relax.op.matmul(q, k))
-  return (art_out, past_key_value) # (out, past_key_value)
+  return (q, past_key_value) # (out, past_key_value)
 
 ######################### FLASH ATTENTION IMPLEMENTATION TYPE TORCH (END) ##########################
 
