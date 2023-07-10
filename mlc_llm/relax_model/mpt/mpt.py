@@ -134,6 +134,7 @@ def scaled_multihead_dot_product_attention(
     key_mask = nn.emit(relax.op.bitwise_not(relax.op.reshape(key_padding_mask, (b, 1, 1, s_k))))
     attn_weight = nn.emit(relax.op.masked_fill(attn_weight, key_mask, min_val))
   if is_causal and (not q.struct_info.shape[2] == 1):
+      print("USE CAUSAL MASK")
       s = relax.op.maximum(s_q, s_k)
       causal_mask = nn.emit(relax.op.ones((s, s,), dtype="float16"))
       causal_mask = nn.emit(relax.op.tril(causal_mask))
@@ -144,11 +145,11 @@ def scaled_multihead_dot_product_attention(
       causal_mask = nn.emit(relax.op.strided_slice(causal_mask, [0, 1], [s_q_end - s_q, s_k_end - s_k], [s_q_end, s_k_end]))
       causal_mask = nn.emit(relax.op.reshape(causal_mask, (1, 1, s_q, s_k)))
       attn_weight = nn.emit(relax.op.masked_fill(attn_weight, causal_mask, min_val))
-  attn_weight = nn.emit(relax.op.nn.softmax(attn_weight))
+  # attn_weight = nn.emit(relax.op.nn.softmax(attn_weight))
   out = nn.emit(relax.op.matmul(attn_weight, v))
   out = reverse_reshape_and_permute(out)
 
-  return (v, past_key_value) # (out, past_key_value)
+  return (attn_weight, past_key_value) # (out, past_key_value)
 
 ######################### FLASH ATTENTION IMPLEMENTATION TYPE TORCH (END) ##########################
 
