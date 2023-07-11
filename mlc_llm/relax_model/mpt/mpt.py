@@ -113,6 +113,9 @@ def scaled_multihead_dot_product_attention(
   s_k = k.struct_info.shape[-1]
   if softmax_scale is None:
     softmax_scale = 1 / math.sqrt(d)
+  # TODO(vchernov): matmul(q, k) generates inf when float16 is used. There is workaround
+  q = nn.emit(relax.op.astype(q, "float32"))
+  k = nn.emit(relax.op.astype(k, "float32"))
   softmax_scale = relax.op.astype(relax.const(softmax_scale), q.struct_info.dtype)
   attn_weight = nn.emit(relax.op.matmul(q, k) * softmax_scale)
   _, _, s_q_end, s_k_end = attn_bias.struct_info.shape
@@ -144,7 +147,9 @@ def scaled_multihead_dot_product_attention(
       causal_mask = nn.emit(relax.op.strided_slice(causal_mask, [0, 1], [s_q_end - s_q, s_k_end - s_k], [s_q_end, s_k_end]))
       causal_mask = nn.emit(relax.op.reshape(causal_mask, (1, 1, s_q, s_k)))
       attn_weight = nn.emit(relax.op.masked_fill(attn_weight, causal_mask, min_val))
-  attn_weight = nn.emit(relax.op.nn.softmax(attn_weight))
+  # TODO(vchernov): matmul(q, k) generates inf when float16 is used.
+  # There is uncast after workaround with float calculation due to softmax range = [0, 1]
+  attn_weight = nn.emit(relax.op.astype(relax.op.nn.softmax(attn_weight), "float16"))
   out = nn.emit(relax.op.matmul(attn_weight, v))
   out = reverse_reshape_and_permute(out)
 
