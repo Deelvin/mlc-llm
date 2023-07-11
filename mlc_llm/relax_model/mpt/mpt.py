@@ -453,12 +453,12 @@ class MPTBlock(nn.Module):
       attention_mask=attention_mask,
       is_causal=is_causal
     )
-    # residual = nn.emit(residual + hidden_states)
+    residual = nn.emit(residual + hidden_states)
 
     # Fully Connected
-    # hidden_states = self.post_attention_layernorm(residual)
-    # hidden_states = self.mlp(hidden_states)
-    # hidden_states = nn.emit(residual + hidden_states)
+    hidden_states = self.post_attention_layernorm(residual)
+    hidden_states = self.mlp(hidden_states)
+    hidden_states = nn.emit(residual + hidden_states)
 
     return (hidden_states, present_key_value)
 
