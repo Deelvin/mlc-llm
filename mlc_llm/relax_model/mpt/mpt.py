@@ -151,10 +151,9 @@ def scaled_multihead_dot_product_attention(
       attn_weight = nn.emit(relax.op.masked_fill(attn_weight, causal_mask, min_val))
   # TODO(vchernov): matmul(q, k) generates inf when float16 is used.
   # There is uncast after workaround with float calculation due to softmax range = [0, 1]
+  attn_weight = nn.emit(relax.op.nn.softmax(attn_weight))
   if dtype != "float32":
-    attn_weight = nn.emit(relax.op.astype(relax.op.nn.softmax(attn_weight), dtype))
-  else:
-    attn_weight = nn.emit(relax.op.nn.softmax(attn_weight))
+    attn_weight = nn.emit(relax.op.astype(attn_weight, dtype))
   out = nn.emit(relax.op.matmul(attn_weight, v))
   out = reverse_reshape_and_permute(out)
 
