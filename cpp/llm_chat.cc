@@ -516,10 +516,6 @@ class LLMChat {
 
     auto tstart = std::chrono::high_resolution_clock::now();
 
-    for (int64_t i = 0; i < token_len; ++i) {
-      std::cout << "PROMPT TOKEN [" << i << "]: " << prompt_tokens[i] << std::endl;
-    }
-
     int32_t new_seq_len = total_seq_len_ + token_len;
     NDArray logits_on_device = this->Forward(prompt_tokens, new_seq_len);
     total_seq_len_ = new_seq_len;
@@ -536,8 +532,6 @@ class LLMChat {
   void DecodeStep() {
     ICHECK(!output_ids_.empty());
     int32_t last_token = output_ids_.back();
-
-    std::cout << "LAST TOKEN TO DECODE: " << last_token << std::endl;
 
     auto tstart = std::chrono::high_resolution_clock::now();
 
@@ -608,13 +602,11 @@ class LLMChat {
     ICHECK(array->data != nullptr) << "Array data is nullptr";
     // Check that the data on CPU and copy if need
     if (array->device.device_type != kDLCPU) {
-      std::cout << "Copy to CPU" << std::endl;
       NDArray array_cpu;
       array_cpu = array.CopyTo(DLDevice{kDLCPU, 0});
       TVMSynchronize(device_.device_type, device_.device_id, nullptr);
       return array_cpu;
     } else {
-      std::cout << "Copy inside CPU" << std::endl;
       return array;
     }
   }
@@ -813,7 +805,7 @@ class LLMChat {
       logits_on_cpu_.CopyFrom(logits_or_prob);
     }
     TVMSynchronize(device_.device_type, device_.device_id, nullptr);
-    PrintNDArray(logits_on_cpu_, 100, "Logits");
+    // PrintNDArray(logits_on_cpu_, 100, "Logits");
   }
 
   // Clear kv cache
