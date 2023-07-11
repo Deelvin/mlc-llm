@@ -100,7 +100,7 @@ def scaled_multihead_dot_product_attention(
     needs_weights=False,
     multiquery=False,
 ):
-  dtype = q.struct_info.dtype
+  dtype = query.struct_info.dtype
   q = reshape_and_permute(query, n_heads, d_model)
   kv_n_heads = 1 if multiquery else n_heads
   k = reshape_and_permute(key, kv_n_heads, d_model, [0, 2, 3, 1])
