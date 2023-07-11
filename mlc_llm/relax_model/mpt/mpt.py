@@ -695,8 +695,6 @@ class MPTModel(nn.Module):
     if use_cache and past_key_values is None:
       past_key_values = [() for _ in range(self.n_layers)]
     for (b_idx, block) in enumerate(self.blocks):
-      if b_idx != 0:
-        break
       past_key_value = past_key_values[b_idx] if past_key_values is not None else None
       (x, past_key_value) = block(x, past_key_value=past_key_value, attn_bias=attn_bias, attention_mask=attention_mask, is_causal=self.is_causal)
       if past_key_values is not None:
