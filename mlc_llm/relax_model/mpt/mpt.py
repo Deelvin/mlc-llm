@@ -131,6 +131,9 @@ def scaled_multihead_dot_product_attention(
         (attn_bias.struct_info.shape[-2] != 1 and
           attn_bias.struct_info.shape[-2] != s_q)): # dynamic condition?
       raise RuntimeError(f'attn_bias (shape: {attn_bias.struct_info.shape}) is expected to broadcast to shape: {attn_weight.struct_info.shape}.')
+    # TODO(vchernov): matmul(q, k) generates inf when float16 is used.
+    if dtype != "float32":
+      attn_bias = nn.emit(relax.op.astype(attn_bias, "float32"))
     attn_weight = attn_weight + attn_bias
   min_val = get_type_min_val(q)
   if key_padding_mask is not None:
