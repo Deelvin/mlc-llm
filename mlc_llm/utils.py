@@ -219,7 +219,6 @@ def transform_params(
             )
 
             torch_param_names = list(torch_params.keys())
-            # print("MLC PARAM NAMES:", pname2pidx)
             for torch_param_name in torch_param_names:
                 if str(torch_params[torch_param_name].dtype) == "torch.bfloat16":
                     if args.quantization.mode == "no" and args.quantization.model_dtype == "float16":
@@ -235,14 +234,9 @@ def transform_params(
                     raw_param = torch_params[torch_param_name].detach().cpu().numpy()
                 del torch_params[torch_param_name]
 
-                if not raw_param.flags['C_CONTIGUOUS']:
-                    print("NON_CONTIGUOUS TENSOR WAS FOUND:", torch_param_name)
                 for param_name, param in f_convert_param_bkwd(
                     torch_param_name, raw_param
                 ):
-                    if param_name == "transformer.blocks.0.self_attn.out_proj.weight":
-                        print("PARAM SHAPE from HF:", raw_param.shape)
-                        print("PARAM from HF:", raw_param)
                     if param_name in pname2pidx.keys():
                         assert pname2pidx[param_name] not in loaded_params_dict
                         loaded_params_dict[pname2pidx[param_name]] = tvm.nd.array(
