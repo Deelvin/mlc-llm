@@ -495,6 +495,7 @@ class LLMChat {
    * \brief Generate the next token given a prompt.
    */
   void PrefillStep(std::string inp, bool append_conversation = true) {
+    std::cout << "PREFILL STEP" << std::endl;
     if (conversation_.name == "LM") {
       this->ResetChat();
     }
@@ -530,6 +531,7 @@ class LLMChat {
   }
 
   void DecodeStep() {
+    std::cout << "DECODE STEP" << std::endl;
     ICHECK(!output_ids_.empty());
     int32_t last_token = output_ids_.back();
 
@@ -736,6 +738,13 @@ class LLMChat {
 
   // run forward compute
   NDArray Forward(std::vector<int32_t> input_tokens, int64_t cur_pos) {
+    // Print input tokens
+    std::cout << "INPUT TOKENS = [";
+    for (size_t i = 0; i < input_tokens.size(); ++i) {
+      if (i != 0) std::cout << ", ";
+      std::cout << input_tokens[i];
+    }
+    std::cout << "]" << std::endl;
     Array<ObjectRef> ret;
     if (input_tokens.size() > 1 && prefill_func_.defined()) {
       NDArray input_data = this->GetInputTokenNDArray(input_tokens);
@@ -805,7 +814,7 @@ class LLMChat {
       logits_on_cpu_.CopyFrom(logits_or_prob);
     }
     TVMSynchronize(device_.device_type, device_.device_id, nullptr);
-    // PrintNDArray(logits_on_cpu_, 100, "Logits");
+    PrintNDArray(logits_on_cpu_, 100, "OUTPUT LOGITS");
   }
 
   // Clear kv cache
