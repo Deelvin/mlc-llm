@@ -735,23 +735,23 @@ class MPTForCausalLM(nn.Module):
       return_dict: Optional[bool]=None,
       use_cache: Optional[bool]=None
   ):
-    return_dict = return_dict if return_dict is not None else self.return_dict
-    use_cache = use_cache if use_cache is not None else self.use_cache
+    # return_dict = return_dict if return_dict is not None else self.return_dict
+    # use_cache = use_cache if use_cache is not None else self.use_cache
 
     # It is part from prepare_inputs_for_generation
-    if past_key_values is not None:
-      # slicing input_ids[:, -1]
-      dim1_len = input_ids.struct_info.shape[1]
-      input_ids_slice = nn.emit(relax.op.strided_slice(input_ids, [1], [dim1_len - 1], [dim1_len]))
-      input_ids = nn.emit(relax.op.expand_dims(input_ids_slice, axis=-1))
+    # if past_key_values is not None:
+    #   # slicing input_ids[:, -1]
+    #   dim1_len = input_ids.struct_info.shape[1]
+    #   input_ids_slice = nn.emit(relax.op.strided_slice(input_ids, [1], [dim1_len - 1], [dim1_len]))
+    #   input_ids = nn.emit(relax.op.expand_dims(input_ids_slice, axis=-1))
     outputs = self.transformer(
         input_ids=input_ids,
-        past_key_values=past_key_values,
+        past_key_values=None,
         attention_mask=attention_mask,
         prefix_mask=prefix_mask,
         sequence_id=sequence_id,
-        return_dict=return_dict,
-        use_cache=use_cache
+        return_dict=True,
+        use_cache=False
     )
 
     logits = nn.emit(relax.op.linear(outputs[0], self.transformer.wte.weight))
