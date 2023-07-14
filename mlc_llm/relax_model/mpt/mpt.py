@@ -684,25 +684,25 @@ class MPTModel(nn.Module):
     tok_emb = self.wte(input_ids)
     if self.alibi:
       x = tok_emb
-    else:
-      past_position = 0
-      if past_key_values is not None:
-        if len(past_key_values) != self.n_layers:
-          raise ValueError(f'past_key_values must provide a past_key_value for each attention ' + f'layer in the network (len(past_key_values)={len(past_key_values)!r}; self.config.n_layers={self.n_layers!r}).')
-        past_position = past_key_values[0][0].struct_info.shape[1]
-        if self.attn_impl == 'torch':
-          past_position = past_key_values[0][0].struct_info.shape[3]
-      if S + past_position > self.max_seq_len:
-        raise ValueError(f'Cannot forward input with past sequence length {past_position} and current sequence length {S + 1}, this model only supports total sequence length <= {self.max_seq_len}.')
-      pos = nn.emit(relax.op.expand_dims(relax.op.arange(past_position, S + past_position, dtype="long"), axis=0))
-      if attention_mask is not None:
-        pos_diff_to_slice = nn.emit(relax.op.cumsum(relax.op.astype(relax.op.bitwise_not(attention_mask), "int32"), axis=1))
-        dim1_len = pos_diff_to_slice.struct_info.shape[1]
-        # slicing [:, past_position:]
-        pos_diff = nn.emit(relax.op.strided_slice(pos_diff_to_slice, [1], [past_position], [dim1_len]))
-        pos = nn.emit(relax.op.clip(pos - pos_diff, min=0))
-      pos_emb = self.wpe(pos)
-      x = tok_emb + pos_emb
+    # else:
+    #   past_position = 0
+    #   if past_key_values is not None:
+    #     if len(past_key_values) != self.n_layers:
+    #       raise ValueError(f'past_key_values must provide a past_key_value for each attention ' + f'layer in the network (len(past_key_values)={len(past_key_values)!r}; self.config.n_layers={self.n_layers!r}).')
+    #     past_position = past_key_values[0][0].struct_info.shape[1]
+    #     if self.attn_impl == 'torch':
+    #       past_position = past_key_values[0][0].struct_info.shape[3]
+    #   if S + past_position > self.max_seq_len:
+    #     raise ValueError(f'Cannot forward input with past sequence length {past_position} and current sequence length {S + 1}, this model only supports total sequence length <= {self.max_seq_len}.')
+    #   pos = nn.emit(relax.op.expand_dims(relax.op.arange(past_position, S + past_position, dtype="long"), axis=0))
+    #   if attention_mask is not None:
+    #     pos_diff_to_slice = nn.emit(relax.op.cumsum(relax.op.astype(relax.op.bitwise_not(attention_mask), "int32"), axis=1))
+    #     dim1_len = pos_diff_to_slice.struct_info.shape[1]
+    #     # slicing [:, past_position:]
+    #     pos_diff = nn.emit(relax.op.strided_slice(pos_diff_to_slice, [1], [past_position], [dim1_len]))
+    #     pos = nn.emit(relax.op.clip(pos - pos_diff, min=0))
+    #   pos_emb = self.wpe(pos)
+    #   x = tok_emb + pos_emb
     (attn_bias, attention_mask) = self._attn_bias(dtype=x.struct_info.dtype, attention_mask=attention_mask, prefix_mask=prefix_mask, sequence_id=sequence_id)
     # if use_cache and past_key_values is None:
     #   past_key_values = [() for _ in range(self.n_layers)]
