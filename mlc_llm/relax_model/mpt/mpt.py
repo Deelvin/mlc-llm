@@ -834,6 +834,10 @@ def get_model(args, hf_config):
       return pname.replace("self_attn", "attn")
     elif "mlp" in pname:
       return pname.replace("mlp", "ffn")
+    elif "input_layernorm" in pname:
+      return pname.replace("input_layernorm", "norm_1")
+    elif "post_attention_layernorm" in pname:
+      return pname.replace("post_attention_layernorm", "norm_2")
     else:
       return pname
 
@@ -846,6 +850,10 @@ def get_model(args, hf_config):
       pname = torch_pname.replace("attn", "self_attn")
     elif "ffn" in torch_pname:
       pname = torch_pname.replace("ffn", "mlp")
+    elif "norm_1" in torch_pname:
+      pname = torch_pname.replace("norm_1", "input_layernorm")
+    elif "norm_2" in torch_pname:
+      pname = torch_pname.replace("norm_2", "post_attention_layernorm")
     else:
       pname = torch_pname
 
