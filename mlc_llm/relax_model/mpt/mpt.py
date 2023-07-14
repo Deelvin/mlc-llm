@@ -4,9 +4,8 @@ from typing import Optional, Tuple, List, Dict
 import numpy as np
 
 import tvm
-from tvm import relax, te
+from tvm import relax
 from tvm.relax.testing import nn
-from tvm.script import relax as R
 
 from .mpt_config import MPTConfig, attn_config_defaults
 from ...utils import load_torch_pname2binname_map
@@ -34,9 +33,8 @@ def _cast_if_autocast_enabled(tensor: relax.Expr, dtype="float32"):
 class LPLayerNormWOBias(nn.Module):
   def __init__(self, normalized_shape, dtype, eps=1e-05):
     self.weight = nn.Parameter((normalized_shape,), dtype=dtype, name="low_precision_layernorm_weight")
-    # TODO: check default filling of weights
-    self.weight = relax.op.ones((normalized_shape,), dtype)
-    self.bias = relax.op.zeros((normalized_shape,), dtype)
+    # TODO(vchernov): need to set something to layer_norm, but not use
+    self.dummy_bias = relax.op.zeros((normalized_shape,), dtype)
     self.eps = eps
 
     self.dtype = dtype
@@ -44,9 +42,8 @@ class LPLayerNormWOBias(nn.Module):
   def forward(self, x):
     dtype = self.dtype # TODO: temporal workaround
     downcast_x = _cast_if_autocast_enabled(x, dtype)
-    downcast_weight = _cast_if_autocast_enabled(self.weight, dtype) if self.weight is not None else self.weight
-    downcast_bias = _cast_if_autocast_enabled(self.bias, dtype) if self.bias is not None else self.bias
-    return nn.emit(relax.op.nn.layer_norm(downcast_x, downcast_weight, downcast_bias, axes=-1, epsilon=self.eps))
+    downcast_weight = _cast_if_autocast_enabled(self.weight, dtype)
+    return nn.emit(relax.op.nn.layer_norm(downcast_x, downcast_weight, self.dummy_bias, axes=-1, epsilon=self.eps, center=False))
 
 NORM_CLASS_REGISTRY = {'low_precision_layernorm': LPLayerNormWOBias}
 
