@@ -144,10 +144,7 @@ def load_torch_pname2binname_map(
             f_convert_pname_fwd(pname): "pytorch_model.bin" for pname in pnames
         }
 
-    print("PNAME2BINNAME:", pname2binname)
     for pname in pnames:
-        if f_convert_pname_fwd(pname) not in pname2binname:
-            print("MISSED PNAME:", pname)
         assert f_convert_pname_fwd(pname) in pname2binname
     return pname2binname
 
