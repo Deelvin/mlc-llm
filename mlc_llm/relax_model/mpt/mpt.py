@@ -455,7 +455,7 @@ class MPTBlock(nn.Module):
       is_causal: bool=True,
   ) -> Tuple[relax.Expr, relax.Expr, Optional[Tuple[relax.Expr, relax.Expr]]]:
     residual = hidden_states
-    # hidden_states = self.input_layernorm(hidden_states) # TODO: debug comment: not nan
+    hidden_states = self.input_layernorm(hidden_states)
 
     # # Self Attention
     # (hidden_states, present_key_value) = self.self_attn(
