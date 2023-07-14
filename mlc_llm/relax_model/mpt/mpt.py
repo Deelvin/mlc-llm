@@ -712,7 +712,7 @@ class MPTModel(nn.Module):
       if past_key_values is not None:
         past_key_values[b_idx] = past_key_value
     x = self.norm_f(x)
-    return nn.emit(relax.op.astype(tok_emb, "float32")), past_key_values # x, past_key_values
+    return tok_emb, past_key_values # x, past_key_values
 
 
 class MPTForCausalLM(nn.Module):
@@ -754,7 +754,8 @@ class MPTForCausalLM(nn.Module):
         use_cache=False
     )
 
-    logits = nn.emit(relax.op.linear(outputs[0], self.transformer.wte.weight))
+    # logits = nn.emit(relax.op.linear(outputs[0], self.transformer.wte.weight))
+    logits = outputs[0]
 
     if logits.struct_info.dtype != "float32":
       logits = nn.emit(relax.op.astype(logits, "float32"))
