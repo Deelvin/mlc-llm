@@ -712,7 +712,7 @@ class MPTModel(nn.Module):
       if past_key_values is not None:
         past_key_values[b_idx] = past_key_value
     x = self.norm_f(x)
-    return tok_emb, past_key_values # x, past_key_values
+    return nn.emit(relax.op.astype(tok_emb, "float32")), past_key_values # x, past_key_values
 
 
 class MPTForCausalLM(nn.Module):
@@ -822,7 +822,7 @@ def get_model(args, hf_config):
   create_metadata_func(
       bb,
       model_name=model_name,
-      max_window_size=128,     # TODO: temporal limit for max output length, change to -1 after tests
+      max_window_size=5,     # TODO: temporal limit for max output length, change to -1 after tests
       stop_tokens=[0],
       add_prefix_space=False, # TODO: what is it?
   )
