@@ -660,8 +660,8 @@ class MPTModel(nn.Module):
       return_dict: Optional[bool]=None,
       use_cache: Optional[bool]=None
   ):
-    return_dict = return_dict if return_dict is not None else self.return_dict
-    use_cache = use_cache if use_cache is not None else self.use_cache
+    # return_dict = return_dict if return_dict is not None else self.return_dict
+    # use_cache = use_cache if use_cache is not None else self.use_cache
     if attention_mask is not None:
       attention_mask = nn.emit(relax.op.astype(attention_mask, "bool"))
       # TODO(vchernov): I'm not sure we should calculate it and can compare in Relax
@@ -671,12 +671,12 @@ class MPTModel(nn.Module):
         relax.op.strided_slice(attention_mask, [1], [dim1_len - 1], [dim1_len])
       ) != attention_mask.struct_info.shape[0]:
         raise NotImplementedError('MPT does not support generation with right padding.')
-    if prefix_mask is not None:
-      prefix_mask = nn.emit(relax.op.astype(prefix_mask, "bool"))
-    if not return_dict:
-      raise NotImplementedError('return_dict False is not implemented yet for MPT')
-    if self.prefix_lm and prefix_mask is None:
-      raise ValueError('prefix_mask is a required argument when MPT is configured with prefix_lm=True.')
+    # if prefix_mask is not None:
+    #   prefix_mask = nn.emit(relax.op.astype(prefix_mask, "bool"))
+    # if not return_dict:
+    #   raise NotImplementedError('return_dict False is not implemented yet for MPT')
+    # if self.prefix_lm and prefix_mask is None:
+    #   raise ValueError('prefix_mask is a required argument when MPT is configured with prefix_lm=True.')
 
     S = input_ids.struct_info.shape[1]
     assert S <= self.max_seq_len, f'Cannot forward input with seq_len={S}, this model only supports seq_len<={self.max_seq_len}'
@@ -704,8 +704,8 @@ class MPTModel(nn.Module):
       pos_emb = self.wpe(pos)
       x = tok_emb + pos_emb
     (attn_bias, attention_mask) = self._attn_bias(dtype=x.struct_info.dtype, attention_mask=attention_mask, prefix_mask=prefix_mask, sequence_id=sequence_id)
-    if use_cache and past_key_values is None:
-      past_key_values = [() for _ in range(self.n_layers)]
+    # if use_cache and past_key_values is None:
+    #   past_key_values = [() for _ in range(self.n_layers)]
     for (b_idx, block) in enumerate(self.blocks):
       past_key_value = past_key_values[b_idx] if past_key_values is not None else None
       (x, past_key_value) = block(x, past_key_value=past_key_value, attn_bias=attn_bias, attention_mask=attention_mask, is_causal=self.is_causal)
