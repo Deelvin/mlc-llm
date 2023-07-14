@@ -711,8 +711,8 @@ class MPTModel(nn.Module):
       (x, past_key_value) = block(x, past_key_value=past_key_value, attn_bias=attn_bias, attention_mask=attention_mask, is_causal=self.is_causal)
       if past_key_values is not None:
         past_key_values[b_idx] = past_key_value
-    x = self.norm_f(x)
-    return tok_emb, past_key_values # x, past_key_values
+    # x = self.norm_f(x)
+    return x, past_key_values # x, past_key_values
 
 
 class MPTForCausalLM(nn.Module):
