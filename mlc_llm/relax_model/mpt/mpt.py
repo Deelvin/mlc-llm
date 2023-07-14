@@ -712,7 +712,7 @@ class MPTModel(nn.Module):
       if past_key_values is not None:
         past_key_values[b_idx] = past_key_value
     x = self.norm_f(x)
-    return x, past_key_values
+    return tok_emb, past_key_values # x, past_key_values
 
 
 class MPTForCausalLM(nn.Module):
