@@ -222,9 +222,10 @@ def transform_params(
             for torch_param_name in torch_param_names:
                 if str(torch_params[torch_param_name].dtype) == "torch.bfloat16":
                     if args.quantization.mode == "no" and args.quantization.model_dtype == "float16":
-                        print("RAW PARAM NAME:", torch_param_name)
-                        torch_param = torch_params[torch_param_name]
-                        print("IS RAW PARAM CONTIGUOUS?", torch_param.is_contiguous())
+                        # TODO(vchernov): remove after debug
+                        # print("RAW PARAM NAME:", torch_param_name)
+                        # torch_param = torch_params[torch_param_name]
+                        # print("IS RAW PARAM CONTIGUOUS?", torch_param.is_contiguous())
                         raw_param = (
                             torch_params[torch_param_name].detach().cpu().to(dtype=torch.float16).numpy()
                         )
