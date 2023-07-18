@@ -397,7 +397,7 @@ class MultiheadAttention(nn.Module):
         is_causal=is_causal,
         needs_weights=False,
     )
-    return (self.out_proj.weight, attn_out[1]) # (self.out_proj(attn_out[0]), attn_out[1])
+    return (self.out_proj(attn_out[0]), attn_out[1])
 
 ATTN_CLASS_REGISTRY = {'multihead_attention': MultiheadAttention}
 
@@ -853,8 +853,8 @@ def get_model(args, hf_config):
     else:
       pname = torch_pname
 
-    if "out_proj" in torch_pname:
-      raw_param = raw_param.T
+    # if "out_proj" in torch_pname:
+    #   raw_param = raw_param.T
     # # TVM does not support bfloat16
     # if raw_param.dtype == "bfloat16":
     #   raw_param = raw_param.astype("float16")
