@@ -352,8 +352,6 @@ class MultiheadAttention(nn.Module):
     if self.softmax_scale is None:
       self.softmax_scale = 1 / math.sqrt(self.d_model / self.n_heads)
     self.Wqkv = Linear(self.d_model, 3 * self.d_model, dtype, bias=False)
-    fuse_splits = (d_model, 2 * d_model)
-    self.Wqkv._fused = (0, fuse_splits)
     if self.qk_ln:
       self.q_ln = LayerNorm(self.d_model, dtype)
       self.k_ln = LayerNorm(self.d_model, dtype)
@@ -372,8 +370,6 @@ class MultiheadAttention(nn.Module):
     else:
       raise ValueError(f'attn_impl={attn_impl!r} is an invalid setting.')
     self.out_proj = Linear(self.d_model, self.d_model, dtype, bias=False)
-    # TODO: Does field _is_residual exist?
-    # self.out_proj._is_residual = True
 
   def forward(self, x, past_key_value=None, attn_bias=None, attention_mask=None, is_causal=True):
     qkv = self.Wqkv(x)
