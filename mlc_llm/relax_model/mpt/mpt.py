@@ -853,9 +853,11 @@ def get_model(args, hf_config):
     else:
       pname = torch_pname
 
-    # TVM does not support bfloat16
-    if raw_param.dtype == "bfloat16":
-      raw_param = raw_param.astype("float16")
+    if "out_proj" in torch_pname:
+      raw_param = raw_param.T
+    # # TVM does not support bfloat16
+    # if raw_param.dtype == "bfloat16":
+    #   raw_param = raw_param.astype("float16")
     return [(pname, raw_param)]
 
   args.pidx2pname = pidx2pname
