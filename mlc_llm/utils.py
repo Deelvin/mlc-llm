@@ -241,6 +241,8 @@ def transform_params(
                 for param_name, param in f_convert_param_bkwd(
                     torch_param_name, raw_param
                 ):
+                    if "0.attn.out_proj" in param_name:
+                        print("weight for block 0:", param)
                     if param_name in pname2pidx.keys():
                         assert pname2pidx[param_name] not in loaded_params_dict
                         loaded_params_dict[pname2pidx[param_name]] = tvm.nd.array(
