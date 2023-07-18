@@ -369,7 +369,7 @@ class MultiheadAttention(nn.Module):
       self.attn_fn = scaled_multihead_dot_product_attention
     else:
       raise ValueError(f'attn_impl={attn_impl!r} is an invalid setting.')
-    self.out_proj = Linear(self.d_model, self.d_model, dtype, bias=False)
+    self.out_proj = Linear(self.d_model, self.d_model, dtype, bias=False, transpose=False)
 
   def forward(self, x, past_key_value=None, attn_bias=None, attention_mask=None, is_causal=True):
     qkv = self.Wqkv(x)
