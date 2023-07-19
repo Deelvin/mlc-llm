@@ -423,7 +423,7 @@ class MPTBlock(nn.Module):
 
     self.hidden_size = config.d_model
     # Init layers
-    self.self_attn = attn_class(
+    self.attn = attn_class(
         d_model=self.hidden_size,
         n_heads=config.n_heads,
         dtype=config.dtype,
@@ -452,7 +452,7 @@ class MPTBlock(nn.Module):
     hidden_states = self.input_layernorm(hidden_states)
 
     # Self Attention
-    (hidden_states, present_key_value) = self.self_attn(
+    (hidden_states, present_key_value) = self.attn(
       hidden_states,
       past_key_value=past_key_value,
       attn_bias=attn_bias,
@@ -707,7 +707,7 @@ class MPTModel(nn.Module):
         if past_key_values is not None:
           past_key_values[b_idx] = past_key_value
       if b_idx == 0:
-        x = block.self_attn.out_proj(x)
+        x = block.attn.out_proj(x)
       else:
         continue
     # x = self.norm_f(x)
@@ -830,9 +830,7 @@ def get_model(args, hf_config):
   mod = bb.get()
 
   def f_convert_pname_fwd(pname: str) -> str:
-    if "self_attn" in pname:
-      return pname.replace("self_attn", "attn")
-    elif "mlp" in pname:
+    if "mlp" in pname:
       return pname.replace("mlp", "ffn")
     elif "input_layernorm" in pname:
       return pname.replace("input_layernorm", "norm_1")
@@ -846,9 +844,7 @@ def get_model(args, hf_config):
   )
 
   def f_convert_param_bkwd(torch_pname: str, raw_param):
-    if "attn" in torch_pname:
-      pname = torch_pname.replace("attn", "self_attn")
-    elif "ffn" in torch_pname:
+    if "ffn" in torch_pname:
       pname = torch_pname.replace("ffn", "mlp")
     elif "norm_1" in torch_pname:
       pname = torch_pname.replace("norm_1", "input_layernorm")
@@ -857,8 +853,6 @@ def get_model(args, hf_config):
     else:
       pname = torch_pname
 
-    # if "out_proj" in torch_pname:
-    #   raw_param = raw_param.T
     # # TVM does not support bfloat16
     # if raw_param.dtype == "bfloat16":
     #   raw_param = raw_param.astype("float16")
