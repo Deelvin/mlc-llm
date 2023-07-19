@@ -232,4 +232,5 @@ def named_parameters(model: nn.Module) -> Dict[str, nn.Parameter]:
         elif isinstance(module, nn.Module):
             for param_name, param in named_parameters(module).items():
                 params[f"{name}.{param_name}"] = param
+    print("RELAX PARAMS:", params)
     return params
