@@ -397,7 +397,11 @@ class MultiheadAttention(nn.Module):
         is_causal=is_causal,
         needs_weights=False,
     )
-    return (nn.emit(relax.op.expand_dims(self.out_proj.weight, 0)), attn_out[1]) # (self.out_proj(attn_out[0]), attn_out[1])
+
+    debug_out = nn.emit(relax.op.expand_dims(relax.op.strided_slice(
+      self.out_proj.weight, [0], [0], [1]
+    ), 0))
+    return (debug_out, attn_out[1]) # (self.out_proj(attn_out[0]), attn_out[1])
 
 ATTN_CLASS_REGISTRY = {'multihead_attention': MultiheadAttention}
 
