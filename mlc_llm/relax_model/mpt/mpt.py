@@ -432,7 +432,7 @@ class MPTBlock(nn.Module):
         qk_ln=attn_config['qk_ln'],
         softmax_scale=attn_config['softmax_scale'],
     )
-    self.mlp = MPTMLP(
+    self.ffn = MPTMLP(
         hidden_size=self.hidden_size,
         intermediate_size=config.expansion_ratio*self.hidden_size,
         dtype=config.dtype,
@@ -463,7 +463,7 @@ class MPTBlock(nn.Module):
 
     # # Fully Connected
     # hidden_states = self.post_attention_layernorm(residual)
-    # hidden_states = self.mlp(hidden_states)
+    # hidden_states = self.ffn(hidden_states)
     # hidden_states = nn.emit(residual + hidden_states)
 
     return (hidden_states, present_key_value)
@@ -830,9 +830,7 @@ def get_model(args, hf_config):
   mod = bb.get()
 
   def f_convert_pname_fwd(pname: str) -> str:
-    if "mlp" in pname:
-      return pname.replace("mlp", "ffn")
-    elif "input_layernorm" in pname:
+    if "input_layernorm" in pname:
       return pname.replace("input_layernorm", "norm_1")
     elif "post_attention_layernorm" in pname:
       return pname.replace("post_attention_layernorm", "norm_2")
@@ -844,9 +842,7 @@ def get_model(args, hf_config):
   )
 
   def f_convert_param_bkwd(torch_pname: str, raw_param):
-    if "ffn" in torch_pname:
-      pname = torch_pname.replace("ffn", "mlp")
-    elif "norm_1" in torch_pname:
+    if "norm_1" in torch_pname:
       pname = torch_pname.replace("norm_1", "input_layernorm")
     elif "norm_2" in torch_pname:
       pname = torch_pname.replace("norm_2", "post_attention_layernorm")
