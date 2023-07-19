@@ -398,10 +398,7 @@ class MultiheadAttention(nn.Module):
         needs_weights=False,
     )
 
-    # debug_out = nn.emit(relax.op.expand_dims(relax.op.strided_slice(
-    #   self.out_proj.weight, [0], [0], [1]
-    # ), 0))
-    return (self.out_proj(attn_out[0], True), attn_out[1])
+    return (attn_out[0], attn_out[1]) # (self.out_proj(attn_out[0]), attn_out[1])
 
 ATTN_CLASS_REGISTRY = {'multihead_attention': MultiheadAttention}
 
@@ -704,12 +701,15 @@ class MPTModel(nn.Module):
     # if use_cache and past_key_values is None:
     #   past_key_values = [() for _ in range(self.n_layers)]
     for (b_idx, block) in enumerate(self.blocks):
-      if b_idx > 0:
-        break
-      past_key_value = past_key_values[b_idx] if past_key_values is not None else None
-      (x, past_key_value) = block(x, past_key_value=past_key_value, attn_bias=attn_bias, attention_mask=attention_mask, is_causal=self.is_causal)
-      if past_key_values is not None:
-        past_key_values[b_idx] = past_key_value
+      if b_idx == 0:
+        past_key_value = past_key_values[b_idx] if past_key_values is not None else None
+        (x, past_key_value) = block(x, past_key_value=past_key_value, attn_bias=attn_bias, attention_mask=attention_mask, is_causal=self.is_causal)
+        if past_key_values is not None:
+          past_key_values[b_idx] = past_key_value
+      if b_idx == 0:
+        x = block.self_attn.out_proj(x)
+      else:
+        continue
     # x = self.norm_f(x)
     return x, past_key_values # x, past_key_values
 

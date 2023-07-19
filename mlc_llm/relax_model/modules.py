@@ -55,16 +55,13 @@ class Linear(nn.Module):
         self.dtype = dtype
         self.out_dtype = out_dtype
 
-    def forward(self, x: relax.Expr, debug=False) -> relax.Var:
-        if debug:
-            return nn.emit(self.weight)
-        else:
-            x = nn.emit(x)
-            weight = permute_dims(self.weight, axes=None)
-            x = nn.emit(matmul(x, weight, out_dtype=self.out_dtype))
-            if self.bias is not None:
-                x = nn.emit(x + self.bias)
-            return x
+    def forward(self, x: relax.Expr) -> relax.Var:
+        x = nn.emit(x)
+        weight = permute_dims(self.weight, axes=None)
+        x = nn.emit(matmul(x, weight, out_dtype=self.out_dtype))
+        if self.bias is not None:
+            x = nn.emit(x + self.bias)
+        return x
 
 
 class Embedding(nn.Module):
