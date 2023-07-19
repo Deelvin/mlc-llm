@@ -35,7 +35,6 @@ class Linear(nn.Module):
         out_features,
         dtype,
         bias=True,
-        transpose=True,
         out_dtype=None,
     ):
         self.in_features = in_features
@@ -53,17 +52,19 @@ class Linear(nn.Module):
             )
         else:
             self.bias = None
-        self.transpose = transpose
         self.dtype = dtype
         self.out_dtype = out_dtype
 
-    def forward(self, x: relax.Expr) -> relax.Var:
-        x = nn.emit(x)
-        weight = permute_dims(self.weight, axes=None) if self.transpose else self.weight
-        x = nn.emit(matmul(x, weight, out_dtype=self.out_dtype))
-        if self.bias is not None:
-            x = nn.emit(x + self.bias)
-        return x
+    def forward(self, x: relax.Expr, debug=False) -> relax.Var:
+        if debug:
+            return nn.emit(self.weight)
+        else:
+            x = nn.emit(x)
+            weight = permute_dims(self.weight, axes=None)
+            x = nn.emit(matmul(x, weight, out_dtype=self.out_dtype))
+            if self.bias is not None:
+                x = nn.emit(x + self.bias)
+            return x
 
 
 class Embedding(nn.Module):
