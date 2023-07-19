@@ -849,5 +849,4 @@ def get_model(args, hf_config):
   args.f_convert_pname_fwd = f_convert_pname_fwd
   args.f_convert_param_bkwd = f_convert_param_bkwd
 
-  print("W NUM:", len(pidx2pname))
   return mod, [None] * len(pidx2pname)
