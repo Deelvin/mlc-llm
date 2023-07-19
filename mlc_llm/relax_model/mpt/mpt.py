@@ -437,8 +437,8 @@ class MPTBlock(nn.Module):
         intermediate_size=config.expansion_ratio*self.hidden_size,
         dtype=config.dtype,
     )
-    self.input_layernorm = norm_class(self.hidden_size, config.dtype)
-    self.post_attention_layernorm = norm_class(self.hidden_size, config.dtype)
+    self.norm_1 = norm_class(self.hidden_size, config.dtype)
+    self.norm_2 = norm_class(self.hidden_size, config.dtype)
 
   def forward(
       self,
@@ -449,7 +449,7 @@ class MPTBlock(nn.Module):
       is_causal: bool=True,
   ) -> Tuple[relax.Expr, relax.Expr, Optional[Tuple[relax.Expr, relax.Expr]]]:
     residual = hidden_states
-    hidden_states = self.input_layernorm(hidden_states)
+    hidden_states = self.norm_1(hidden_states)
 
     # Self Attention
     (hidden_states, present_key_value) = self.attn(
@@ -462,7 +462,7 @@ class MPTBlock(nn.Module):
     # residual = nn.emit(residual + hidden_states)
 
     # # Fully Connected
-    # hidden_states = self.post_attention_layernorm(residual)
+    # hidden_states = self.norm_2(residual)
     # hidden_states = self.ffn(hidden_states)
     # hidden_states = nn.emit(residual + hidden_states)
 
@@ -830,24 +830,14 @@ def get_model(args, hf_config):
   mod = bb.get()
 
   def f_convert_pname_fwd(pname: str) -> str:
-    if "input_layernorm" in pname:
-      return pname.replace("input_layernorm", "norm_1")
-    elif "post_attention_layernorm" in pname:
-      return pname.replace("post_attention_layernorm", "norm_2")
-    else:
-      return pname
+    return pname
 
   pname2binname = load_torch_pname2binname_map(
       model_path, set(pidx2pname.values()), f_convert_pname_fwd
   )
 
   def f_convert_param_bkwd(torch_pname: str, raw_param):
-    if "norm_1" in torch_pname:
-      pname = torch_pname.replace("norm_1", "input_layernorm")
-    elif "norm_2" in torch_pname:
-      pname = torch_pname.replace("norm_2", "post_attention_layernorm")
-    else:
-      pname = torch_pname
+    pname = torch_pname
 
     # # TVM does not support bfloat16
     # if raw_param.dtype == "bfloat16":
