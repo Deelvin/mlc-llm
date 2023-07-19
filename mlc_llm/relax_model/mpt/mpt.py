@@ -777,11 +777,8 @@ def create_decoding_func(bb: relax.BlockBuilder, config: MPTConfig) -> Dict[int,
       print("RELAX PARAMS:", named_params)
       print("ENUM NAMES:")
       for i, (name, param) in enumerate(named_params.items()):
-        print("Name:", name)
         pidx2pname[i] = name
         assert param.same_as(params[i + 1])
-        print("PARAM:", param)
-        print("PARAMS[i+1]:", params[i+1])
       if states is None:
         states = ()
       gv = bb.emit_output((logits, relax.Tuple(states)))
@@ -843,6 +840,7 @@ def get_model(args, hf_config):
 
   def f_convert_param_bkwd(torch_pname: str, raw_param):
     pname = torch_pname
+    print("RAW PARAM DTYPE:", raw_param.dtype)
 
     # # TVM does not support bfloat16
     # if raw_param.dtype == "bfloat16":
