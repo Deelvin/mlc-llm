@@ -647,7 +647,9 @@ class LLMChat {
     // LOG(INFO) << tensor_tag << "[:" << num_tag << "] = [" << os.str() << "]";
 
     // Save to binary file
-    std::ofstream fs("tensor.bin", std::ios::out | std::ios::binary | std::ios::app);
+    std::string file_name = "tensor_" + std::to_string(debug_index_) + ".bin";
+    std::cout << tensor_tag << " is saved in " << file_name << std::endl;
+    std::ofstream fs(file_name, std::ios::out | std::ios::binary | std::ios::app);
     fs.write(reinterpret_cast<const char*>(p_data), 4 * numel);
     fs.close();
   }
@@ -929,6 +931,8 @@ class LLMChat {
   Array<ObjectRef> kv_cache_;
   // Temp logits on cpu
   NDArray logits_on_cpu_{nullptr};
+  // Debug index
+  int debug_index_ = 0;
 };
 
 /*!
