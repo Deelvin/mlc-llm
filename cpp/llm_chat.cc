@@ -645,6 +645,11 @@ class LLMChat {
     // TODO(vchernov): after test return LOG(INFO)
     std::cout << tensor_tag << "[:" << num_tag << "] = [" << os.str() << "]" << std::endl;
     // LOG(INFO) << tensor_tag << "[:" << num_tag << "] = [" << os.str() << "]";
+
+    // Save to binary file
+    std::ofstream fs("tensor.bin", std::ios::out | std::ios::binary | std::ios::app);
+    fs.write(reinterpret_cast<const char*>(p_data), 4 * numel);
+    fs.close();
   }
 
  private:
