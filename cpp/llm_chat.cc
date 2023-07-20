@@ -128,7 +128,7 @@ class LLMChat {
   friend class LLMChatModule;
 
  public:
-  explicit LLMChat(DLDevice device) : device_(device) {}
+  explicit LLMChat(DLDevice device) : device_(device), debug_index_(0) {}
 
   /*!
    * \return Text describing runtime stats.
@@ -613,7 +613,7 @@ class LLMChat {
     }
   }
 
-  void PrintNDArray(NDArray array, int64_t num = -1, std::string tensor_tag = "Tensor") const {
+  void PrintNDArray(NDArray array, int64_t num = -1, std::string tensor_tag = "Tensor") {
     NDArray array_cpu = getArrayToPrint(array);
 
     size_t ndim = array_cpu->ndim;
@@ -647,7 +647,7 @@ class LLMChat {
     // LOG(INFO) << tensor_tag << "[:" << num_tag << "] = [" << os.str() << "]";
 
     // Save to binary file
-    std::string file_name = "tensor_" + std::to_string(debug_index_) + ".bin";
+    std::string file_name = "tensor_" + std::to_string(debug_index_++) + ".bin";
     std::cout << tensor_tag << " is saved in " << file_name << std::endl;
     std::ofstream fs(file_name, std::ios::out | std::ios::binary | std::ios::app);
     fs.write(reinterpret_cast<const char*>(p_data), 4 * numel);
@@ -932,7 +932,7 @@ class LLMChat {
   // Temp logits on cpu
   NDArray logits_on_cpu_{nullptr};
   // Debug index
-  int debug_index_ = 0;
+  int32_t debug_index_;
 };
 
 /*!
