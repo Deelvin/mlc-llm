@@ -3,7 +3,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 from tvm import relax, te, tir
-from tvm.relax.op import matmul, permute_dims, reshape, take
+from tvm.relax.op import matmul, permute_dims, reshape, take, squeeze, broadcast_to
 from tvm.relax.op.nn import layer_norm
 from tvm.relax.testing import nn
 from tvm.runtime.ndarray import array as tvm_array
@@ -55,12 +55,16 @@ class Linear(nn.Module):
         self.dtype = dtype
         self.out_dtype = out_dtype
 
-    def forward(self, x: relax.Expr) -> relax.Var:
-        x = nn.emit(x)
-        weight = permute_dims(self.weight, axes=None)
-        x = nn.emit(matmul(x, weight, out_dtype=self.out_dtype))
-        if self.bias is not None:
-            x = nn.emit(x + self.bias)
+    def forward(self, x: relax.Expr, debug=False) -> relax.Var:
+        if debug:
+            x = nn.emit(broadcast_to(squeeze(x, 0), (self.out_features, self.in_features,)))
+            x = nn.emit(x + self.weight)
+        else:
+            x = nn.emit(x)
+            weight = permute_dims(self.weight, axes=None)
+            x = nn.emit(matmul(x, weight, out_dtype=self.out_dtype))
+            if self.bias is not None:
+                x = nn.emit(x + self.bias)
         return x
 
 
