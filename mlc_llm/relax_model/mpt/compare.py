@@ -15,11 +15,11 @@ def load_torch_tensor(path=Path("./orig_tensor.pt")):
 
 def main():
   # Load data from Relax model
-  np_input = np.fromfile(Path("./relax_input.bin"), dtype="float16")
-  np_weight = np.fromfile(Path("./relax_weight.bin"), dtype="float16")
+  np_input = np.fromfile(Path("./relax_input.bin"), dtype="float")
+  np_weight = np.fromfile(Path("./relax_weight.bin"), dtype="float")
   
-  np_input = np_input.astype(float)
-  np_weight = np_weight.astype(float)
+  # np_input = np_input.astype(float)
+  # np_weight = np_weight.astype(float)
   
   # Load data from original model
   orig_input = load_torch_tensor()
