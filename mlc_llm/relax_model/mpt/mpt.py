@@ -451,13 +451,13 @@ class MPTBlock(nn.Module):
     hidden_states = self.norm_1(hidden_states)
 
     # Self Attention
-    (hidden_states, present_key_value) = self.attn(
-      hidden_states,
-      past_key_value=past_key_value,
-      attn_bias=attn_bias,
-      attention_mask=attention_mask,
-      is_causal=is_causal
-    )
+    # (hidden_states, present_key_value) = self.attn(
+    #   hidden_states,
+    #   past_key_value=past_key_value,
+    #   attn_bias=attn_bias,
+    #   attention_mask=attention_mask,
+    #   is_causal=is_causal
+    # )
     # residual = nn.emit(residual + hidden_states)
 
     # # Fully Connected
