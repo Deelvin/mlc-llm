@@ -206,9 +206,6 @@ def transform_params(
         assert f_convert_pname_fwd is not None
         assert f_convert_param_bkwd is not None
         # Otherwise, we load the weight from its corresponding binary file.
-        print("pname2binname SIZE:", len(pname2binname))
-        print("LOADED PARAMS DICT SIZE:", len(loaded_params_dict))
-        print("LOADED PARAMS DICT:", loaded_params_dict)
         if i not in loaded_params_dict:
             import torch  # pylint: disable=import-outside-toplevel
 
