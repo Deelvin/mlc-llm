@@ -405,7 +405,7 @@ class MultiheadAttention(nn.Module):
     #   relax.op.strided_slice(self.out_proj(attn_out[0], debug=True) - residual, [0], [0], [1]),
     #   0)
     # )
-    return (self.out_proj(attn_out[0]), attn_out[1])
+    return (attn_out[0], attn_out[1]) # (self.out_proj(attn_out[0]), attn_out[1])
 
 ATTN_CLASS_REGISTRY = {'multihead_attention': MultiheadAttention}
 
