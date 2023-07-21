@@ -465,7 +465,7 @@ class MPTBlock(nn.Module):
     # hidden_states = self.ffn(hidden_states)
     # hidden_states = nn.emit(residual + hidden_states)
 
-    return (hidden_states, present_key_value)
+    return (hidden_states, None) # (hidden_states, present_key_value)
 
 
 def attn_bias_shape(attn_impl, n_heads, seq_len, alibi, prefix_lm, causal, use_sequence_id):
