@@ -1,4 +1,5 @@
 from pathlib import Path
+import argparse
 
 import torch
 import numpy as np
@@ -25,9 +26,15 @@ def advanced_compare(lft, rht, atol=1e-5, rtol=1e-5):
       print("Elements with index", i, " are not the same left:", lft[i], " right:", rht[i])
 
 def main():
+  parser = argparse.ArgumentParser()
+  parser.add_argument('-r', '--rtol', type=float, default=5e-3,
+                      help="Relative tolerance")
+  parser.add_argument('-a', '--atol', type=float, default=1e-6,
+                      help="Absolute tolerance")
+
+  args = parser.parse_args()
+
   check_num = 10
-  rtol=1e-1
-  atol=1e-8
   # Load data from Relax model
   np_input = np.fromfile(Path("./relax_input.bin"), dtype="float32")
   np_weight = np.fromfile(Path("./relax_weight.bin"), dtype="float32")
@@ -47,13 +54,13 @@ def main():
   print("ORIG INPUT:", orig_np_input[:check_num])
   print("RELAX INPUT:", np_input[:check_num])
   # np.testing.assert_allclose(orig_np_input, np_input, rtol=rtol, atol=atol, verbose=True)
-  advanced_compare(orig_np_input, np_input, rtol=rtol, atol=atol)
+  advanced_compare(orig_np_input, np_input, rtol=args.rtol, atol=args.atol)
 
   print("Compare weights")
   orig_np_line = orig_np_weight[0,:]
   print("ORIG WEIGHT:", orig_np_line[:check_num])
   print("RELAX WEIGHT:", np_weight[:check_num])
-  np.testing.assert_allclose(orig_np_line, np_weight, rtol=rtol, atol=atol, verbose=True)
+  np.testing.assert_allclose(orig_np_line, np_weight, rtol=args.rtol, atol=args.atol, verbose=True)
 
 if __name__ == "__main__":
   main()
