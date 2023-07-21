@@ -7,10 +7,10 @@ import numpy as np
 # fs.write(reinterpret_cast<const char*>(&tensor), sizeof tensor);
 # fs.close();
 
-def save_torch_tensor(t: torch.tensor, path=Path("./orig_tensor.pt")):
+def save_torch_tensor(t: torch.tensor, path=Path("./orig_input.pt")):
   torch.save(t, path)
 
-def load_torch_tensor(path=Path("./orig_tensor.pt")):
+def load_torch_tensor(path=Path("./orig_input.pt")):
   return torch.load(path)
 
 def main():
