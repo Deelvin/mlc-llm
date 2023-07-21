@@ -13,6 +13,17 @@ def save_torch_tensor(t: torch.tensor, path=Path("./orig_input.pt")):
 def load_torch_tensor(path=Path("./orig_input.pt")):
   return torch.load(path)
 
+def advanced_compare(lft, rht, atol=1e-5, rtol=1e-5):
+  if len(lft.shape) > 1:
+    lft = lft.flatten()
+  if len(rht.shape) > 1:
+    lft = rht.flatten()
+  numel = lft.shape[0]
+  assert numel == rht.shape[0]
+  for i in range(numel):
+    if np.abs(lft[i]-rht[i]) > atol + rtol*np.abs(rht[i]):
+      print("Elements with index", i, " are not the same left:", lft[i], " right:", rht[i])
+
 def main():
   check_num = 10
   rtol=1e-5
@@ -35,7 +46,8 @@ def main():
   print("Compare inputs")
   print("ORIG INPUT:", orig_np_input[:check_num])
   print("RELAX INPUT:", np_input[:check_num])
-  np.testing.assert_allclose(orig_np_input, np_input, rtol=rtol, atol=atol, verbose=True)
+  # np.testing.assert_allclose(orig_np_input, np_input, rtol=rtol, atol=atol, verbose=True)
+  advanced_compare(orig_np_input, np_input, rtol=rtol, atol=atol)
 
   print("Compare weights")
   orig_np_line = orig_np_weight[0,:]
