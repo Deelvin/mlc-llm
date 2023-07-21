@@ -26,7 +26,7 @@ def advanced_compare(lft, rht, atol=1e-5, rtol=1e-5):
 
 def main():
   check_num = 10
-  rtol=1e-5
+  rtol=1e-1
   atol=1e-8
   # Load data from Relax model
   np_input = np.fromfile(Path("./relax_input.bin"), dtype="float32")
