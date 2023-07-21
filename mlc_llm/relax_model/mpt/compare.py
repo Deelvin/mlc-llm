@@ -32,7 +32,7 @@ def main():
   print("Compare inputs")
   np.allclose(orig_np_input, np_input, atol=1e-3)
   print("Compare weights")
-  np.allclose(orig_np_weight, np_weight, atol=1e-3)
+  np.allclose(orig_np_weight[0,:], np_weight, atol=1e-3)
 
 if __name__ == "__main__":
   main()
