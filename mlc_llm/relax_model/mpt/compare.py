@@ -17,6 +17,8 @@ def main():
   # Load data from Relax model
   np_input = np.fromfile(Path("./relax_input.bin"), dtype="float")
   np_weight = np.fromfile(Path("./relax_weight.bin"), dtype="float")
+  print("RELAX INPUT TYPE:", np_input.dtype, "SHAPE:", np_input.shape)
+  print("RELAX WEIGHT TYPE:", np_weight.dtype, "SHAPE:", np_weight.shape)
 
   # Load data from original model
   orig_input = load_torch_tensor()
@@ -24,6 +26,8 @@ def main():
 
   orig_np_input = orig_input.numpy()
   orig_np_weight = orig_weight.numpy()
+  print("ORIG INPUT TYPE:", orig_np_input.dtype, "SHAPE:", orig_np_input.shape)
+  print("ORIG WEIGHT TYPE:", orig_np_weight.dtype, "SHAPE:", orig_np_weight.shape)
 
   print("Compare inputs")
   np.allclose(orig_np_input, np_input, atol=1e-3)
