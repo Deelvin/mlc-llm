@@ -15,7 +15,8 @@ def load_torch_tensor(path=Path("./orig_input.pt")):
 
 def main():
   check_num = 10
-  atol=1e-5
+  rtol=1e-5
+  atol=1e-8
   # Load data from Relax model
   np_input = np.fromfile(Path("./relax_input.bin"), dtype="float32")
   np_weight = np.fromfile(Path("./relax_weight.bin"), dtype="float32")
@@ -34,12 +35,13 @@ def main():
   print("Compare inputs")
   print("ORIG INPUT:", orig_np_input[:check_num])
   print("RELAX INPUT:", np_input[:check_num])
-  print("INPUTS CLOSE:", np.allclose(orig_np_input, np_input, atol=atol))
+  np.testing.assert_allclose(orig_np_input, np_input, rtol=rtol, atol=atol, verbose=True)
+
   print("Compare weights")
   orig_np_line = orig_np_weight[0,:]
   print("ORIG WEIGHT:", orig_np_line[:check_num])
   print("RELAX WEIGHT:", np_weight[:check_num])
-  print("WEIGHTS CLOSE:", np.allclose(orig_np_line, np_weight, atol=atol))
+  np.testing.assert_allclose(orig_np_line, np_weight, rtol=rtol, atol=atol, verbose=True)
 
 if __name__ == "__main__":
   main()
