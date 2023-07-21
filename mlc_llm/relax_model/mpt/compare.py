@@ -15,8 +15,8 @@ def load_torch_tensor(path=Path("./orig_input.pt")):
 
 def main():
   # Load data from Relax model
-  np_input = np.fromfile(Path("./relax_input.bin"), dtype="float")
-  np_weight = np.fromfile(Path("./relax_weight.bin"), dtype="float")
+  np_input = np.fromfile(Path("./relax_input.bin"), dtype="float32")
+  np_weight = np.fromfile(Path("./relax_weight.bin"), dtype="float32")
   print("RELAX INPUT TYPE:", np_input.dtype, "SHAPE:", np_input.shape)
   print("RELAX WEIGHT TYPE:", np_weight.dtype, "SHAPE:", np_weight.shape)
 
