@@ -17,17 +17,14 @@ def main():
   # Load data from Relax model
   np_input = np.fromfile(Path("./relax_input.bin"), dtype="float")
   np_weight = np.fromfile(Path("./relax_weight.bin"), dtype="float")
-  
-  # np_input = np_input.astype(float)
-  # np_weight = np_weight.astype(float)
-  
+
   # Load data from original model
   orig_input = load_torch_tensor()
   orig_weight = load_torch_tensor(Path("./orig_weight.pt"))
-  
-  orig_np_input = orig_input.astype(torch.float).numpy()
-  orig_np_weight = orig_weight.astype(torch.float).numpy()
-  
+
+  orig_np_input = orig_input.numpy()
+  orig_np_weight = orig_weight.numpy()
+
   print("Compare inputs")
   np.allclose(orig_np_input, np_input, atol=1e-3)
   print("Compare weights")
