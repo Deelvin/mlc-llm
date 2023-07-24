@@ -21,9 +21,12 @@ def advanced_compare(lft, rht, atol=1e-5, rtol=1e-5):
     lft = rht.flatten()
   numel = lft.shape[0]
   assert numel == rht.shape[0]
+  counter = 0
   for i in range(numel):
     if np.abs(lft[i]-rht[i]) > atol + rtol*np.abs(rht[i]):
       print("Elements with index", i, " are not the same left:", lft[i], " right:", rht[i])
+      counter = counter + 1
+  print("Number of diverged values:", counter, " Percent is", 100*float(counter)/numel,"%")
 
 def main():
   parser = argparse.ArgumentParser()
@@ -31,6 +34,8 @@ def main():
                       help="Relative tolerance")
   parser.add_argument('-a', '--atol', type=float, default=1e-6,
                       help="Absolute tolerance")
+  parser.add_argument('-w', '--check_weight', default=False, action="store_true",
+                      help="Compare weights. Corresponding files are required")
 
   args = parser.parse_args()
 
@@ -56,11 +61,12 @@ def main():
   # np.testing.assert_allclose(orig_np_input, np_input, rtol=rtol, atol=atol, verbose=True)
   advanced_compare(orig_np_input, np_input, rtol=args.rtol, atol=args.atol)
 
-  print("Compare weights")
-  orig_np_line = orig_np_weight[0,:]
-  print("ORIG WEIGHT:", orig_np_line[:check_num])
-  print("RELAX WEIGHT:", np_weight[:check_num])
-  np.testing.assert_allclose(orig_np_line, np_weight, rtol=args.rtol, atol=args.atol, verbose=True)
+  if args.check_weight:
+    print("Compare weights")
+    orig_np_line = orig_np_weight[0,:]
+    print("ORIG WEIGHT:", orig_np_line[:check_num])
+    print("RELAX WEIGHT:", np_weight[:check_num])
+    np.testing.assert_allclose(orig_np_line, np_weight, rtol=args.rtol, atol=args.atol, verbose=True)
 
 if __name__ == "__main__":
   main()
