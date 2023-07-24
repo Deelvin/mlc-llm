@@ -762,7 +762,70 @@ class MPTForCausalLM(nn.Module):
 
     return logits, outputs[1]
 
-def create_decoding_func(bb: relax.BlockBuilder, config: MPTConfig) -> Dict[int, str]:
+
+def create_kv_cache_func(bb: relax.BlockBuilder, config: MPTConfig) -> None:
+    init_shape = relax.ShapeExpr(
+        (
+            config.max_seq_len,
+            config.n_heads,
+            config.d_model // config.n_heads,
+        )
+    )
+    with bb.function("create_kv_cache", []):
+        with bb.dataflow():
+            zeros = bb.emit(relax.op.zeros(init_shape, config.dtype))
+            caches = []
+            f_kv_cache_create = relax.extern("vm.builtin.attention_kv_cache_create")
+            for _ in range(config.n_layers * 2):
+                caches.append(
+                    bb.emit(
+                        relax.Call(
+                            f_kv_cache_create,
+                            args=[zeros, init_shape, relax.PrimValue(0)],
+                            sinfo_args=[relax.ObjectStructInfo()],
+                        )
+                    )
+                )
+            gv = bb.emit_output(caches)
+        bb.emit_func_output(gv)
+
+
+def create_decoding_func_with_kv_cache(bb: relax.BlockBuilder, config: MPTConfig) -> Dict[int, str]:
+  pidx2pname: Dict[int, str] = {}
+  with bb.function("decode"):
+    model = MPTForCausalLM(config)
+    input_ids = nn.Placeholder((1, 1), dtype="int32", name="input_ids")
+    past_key_values = relax.Var(
+        "kv_cache",
+        relax.TupleStructInfo(
+            [relax.ObjectStructInfo() for _ in range(config.n_layers * 2)]
+        ),
+    )
+    with bb.dataflow():
+      logits, key_value_cache = model(
+          input_ids, past_key_values=past_key_values
+      )
+      params = [
+          input_ids,
+          past_key_values,
+      ] + model.parameters()
+
+      named_params = named_parameters(model)
+      for i, (name, param) in enumerate(named_params.items()):
+        pidx2pname[i] = name
+        assert param.same_as(params[i + 2])
+
+      gv = bb.emit_output((logits, relax.Tuple(key_value_cache)))
+    bb.emit_func_output(gv, params)
+
+  mod = bb.get()
+  gv = mod.get_global_var("decode")
+  bb.update_func(gv, mod[gv].with_attr("num_input", 2))
+
+  return pidx2pname
+
+
+def create_decoding_func_wo_kv_cache(bb: relax.BlockBuilder, config: MPTConfig) -> Dict[int, str]:
   pidx2pname: Dict[int, str] = {}
   with bb.function("decode"):
     model = MPTForCausalLM(config)
@@ -809,8 +872,14 @@ def get_model(args, hf_config):
 
   model_path = args.model_path
   dtype = args.quantization.model_dtype
-  # Recommendation from https://huggingface.co/mosaicml/mpt-7b-instruct
-  max_seq_len = args.max_seq_len if args.max_seq_len is not None and args.max_seq_len > 0 else 4096  # 4096 recommended
+
+  if args.max_seq_len is not None and args.max_seq_len > 0:
+    max_seq_len = args.max_seq_len
+  elif hf_config.max_seq_len > 0:
+    max_seq_len = hf_config.max_seq_len
+  else:
+    # Recommendation from https://huggingface.co/mosaicml/mpt-7b-instruct
+    max_seq_len = 4096
 
   hf_config.update({"max_seq_len": max_seq_len})
   # hf_config.update({"max_new_tokens": args.seq_len})
@@ -818,36 +887,32 @@ def get_model(args, hf_config):
   config = MPTConfig(**hf_config, dtype=dtype)
 
   bb = relax.BlockBuilder()
-  pidx2pname = create_decoding_func(bb, config)
+  pidx2pname = None
+  if config.use_cache:
+    create_kv_cache_func(bb, config)
+    pidx2pname = create_decoding_func_with_kv_cache(bb, config)
+  else:
+    pidx2pname = create_decoding_func_wo_kv_cache(bb, config)
   create_softmax_func(bb, config)
   create_metadata_func(
       bb,
       model_name=model_name,
       max_window_size=5,     # TODO: temporal limit for max output length, change to -1 after tests
       stop_tokens=[0],
-      add_prefix_space=False, # TODO: what is it?
+      add_prefix_space=False,
   )
 
   mod = bb.get()
 
-  def f_convert_pname_fwd(pname: str) -> str:
-    return pname
-
   pname2binname = load_torch_pname2binname_map(
-      model_path, set(pidx2pname.values()), f_convert_pname_fwd
+      model_path, set(pidx2pname.values())
   )
-
-  def f_convert_param_bkwd(torch_pname: str, raw_param):
-    pname = torch_pname
-
-    # # TVM does not support bfloat16
-    # if raw_param.dtype == "bfloat16":
-    #   raw_param = raw_param.astype("float16")
-    return [(pname, raw_param)]
 
   args.pidx2pname = pidx2pname
   args.pname2binname = pname2binname
-  args.f_convert_pname_fwd = f_convert_pname_fwd
-  args.f_convert_param_bkwd = f_convert_param_bkwd
+  args.f_convert_pname_fwd = lambda pname: pname
+  args.f_convert_param_bkwd = lambda torch_pname, raw_param: [
+      (torch_pname, raw_param.astype(dtype))
+  ]
 
   return mod, [None] * len(pidx2pname)
