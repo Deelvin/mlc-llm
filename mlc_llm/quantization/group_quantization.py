@@ -1,5 +1,9 @@
 from dataclasses import dataclass
-from typing import List, Literal, Optional
+from typing import List, Optional
+try:
+    from typing import Literal
+except ImportError:
+    from typing_extensions import Literal
 
 from tvm import relax, te, tir, topi
 from tvm.script import tir as T

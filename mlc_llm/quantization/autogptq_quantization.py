@@ -1,5 +1,10 @@
 from dataclasses import dataclass
-from typing import List, Literal, Optional, Dict
+from typing import List, Optional, Dict
+try:
+    from typing import Literal
+except ImportError:
+    from typing_extensions import Literal
+
 import tvm
 import numpy as np
 from tvm._ffi.runtime_ctypes import Device
