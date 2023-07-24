@@ -397,7 +397,7 @@ class MultiheadAttention(nn.Module):
         is_causal=is_causal,
         needs_weights=False,
     )
-    return (attn_out[0], attn_out[1]) # (self.out_proj(attn_out[0]), attn_out[1])
+    return (query, attn_out[1]) # (self.out_proj(attn_out[0]), attn_out[1])
 
 ATTN_CLASS_REGISTRY = {'multihead_attention': MultiheadAttention}
 
@@ -451,13 +451,13 @@ class MPTBlock(nn.Module):
     hidden_states = self.norm_1(hidden_states)
 
     # Self Attention
-    # (hidden_states, present_key_value) = self.attn(
-    #   hidden_states,
-    #   past_key_value=past_key_value,
-    #   attn_bias=attn_bias,
-    #   attention_mask=attention_mask,
-    #   is_causal=is_causal
-    # )
+    (hidden_states, present_key_value) = self.attn(
+      hidden_states,
+      past_key_value=past_key_value,
+      attn_bias=attn_bias,
+      attention_mask=attention_mask,
+      is_causal=is_causal
+    )
     # residual = nn.emit(residual + hidden_states)
 
     # # Fully Connected
@@ -465,7 +465,7 @@ class MPTBlock(nn.Module):
     # hidden_states = self.ffn(hidden_states)
     # hidden_states = nn.emit(residual + hidden_states)
 
-    return (hidden_states, None) # (hidden_states, present_key_value)
+    return (hidden_states, present_key_value)
 
 
 def attn_bias_shape(attn_impl, n_heads, seq_len, alibi, prefix_lm, causal, use_sequence_id):
