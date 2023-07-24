@@ -22,11 +22,18 @@ def advanced_compare(lft, rht, atol=1e-5, rtol=1e-5):
   numel = lft.shape[0]
   assert numel == rht.shape[0]
   counter = 0
+  rtols=[rtol]
   for i in range(numel):
-    if np.abs(lft[i]-rht[i]) > atol + rtol*np.abs(rht[i]):
+    diff = np.abs(lft[i]-rht[i])
+    exp_diff = atol + rtol*np.abs(rht[i])
+    if diff > exp_diff:
+      new_rtol = (diff - atol)/np.abs(rht[i])
+      rtols.append(new_rtol)
       print("Elements with index", i, " are not the same left:", lft[i], " right:", rht[i])
       counter = counter + 1
   print("Number of diverged values:", counter, " Percent is", 100*float(counter)/numel,"%")
+  max_rtol = np.max(rtols)
+  print("Current rtol:", rtol, "Maximum rtol:", max_rtol)
 
 def main():
   parser = argparse.ArgumentParser()
