@@ -117,7 +117,7 @@ def scaled_multihead_dot_product_attention(
     k = nn.emit(relax.op.astype(k, "float32"))
   softmax_scale = relax.op.astype(relax.const(softmax_scale), q.struct_info.dtype)
   attn_weight = nn.emit(relax.op.matmul(q, k) * softmax_scale)
-  debug_out = nn.emit(attn_weight)
+  debug_out = nn.emit(relax.op.expand_dims(relax.op.flatten(attn_weight), [0, 1]))
   _, _, s_q_end, s_k_end = attn_bias.struct_info.shape
   if attn_bias is not None:
     _s_q = np.maximum(0, s_q_end - s_q)
