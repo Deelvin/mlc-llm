@@ -102,11 +102,11 @@ def scaled_multihead_dot_product_attention(
   kv_n_heads = 1 if multiquery else n_heads
   k = reshape_and_permute(key, kv_n_heads, d_model, [0, 2, 3, 1])
   v = reshape_and_permute(value, kv_n_heads, d_model)
-  if past_key_value is not None:
-    if len(past_key_value) != 0:
-      k = nn.emit(relax.op.concat([past_key_value[0], k], axis=3))
-      v = nn.emit(relax.op.concat([past_key_value[1], v], axis=2))
-    past_key_value = (k, v)
+  # if past_key_value is not None:
+  #   if len(past_key_value) != 0:
+  #     k = nn.emit(relax.op.concat([past_key_value[0], k], axis=3))
+  #     v = nn.emit(relax.op.concat([past_key_value[1], v], axis=2))
+  #   past_key_value = (k, v)
   (b, _, s_q, d) = q.struct_info.shape
   s_k = k.struct_info.shape[-1]
   if softmax_scale is None:
@@ -117,6 +117,7 @@ def scaled_multihead_dot_product_attention(
     k = nn.emit(relax.op.astype(k, "float32"))
   softmax_scale = relax.op.astype(relax.const(softmax_scale), q.struct_info.dtype)
   attn_weight = nn.emit(relax.op.matmul(q, k) * softmax_scale)
+  debug_out = nn.emit(attn_weight)
   _, _, s_q_end, s_k_end = attn_bias.struct_info.shape
   if attn_bias is not None:
     _s_q = np.maximum(0, s_q_end - s_q)
@@ -157,7 +158,7 @@ def scaled_multihead_dot_product_attention(
   out = nn.emit(relax.op.matmul(attn_weight, v))
   out = reverse_reshape_and_permute(out)
 
-  return (out, past_key_value)
+  return (debug_out, past_key_value) # (out, past_key_value)
 
 ######################### FLASH ATTENTION IMPLEMENTATION TYPE TORCH (END) ##########################
 
