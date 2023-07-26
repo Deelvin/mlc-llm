@@ -735,7 +735,9 @@ class MPTForCausalLM(nn.Module):
 
   def prepare_attention_mask_for_generation(self, input_ids=None, src_len=None):
     if src_len is not None:
-      return nn.emit(relax.op.ones((1, src_len), dtype="bool"))
+      seq_len = src_len.struct_info.values[0]
+      shape = R.shape([1, seq_len])
+      return nn.emit(relax.op.ones(shape, dtype="bool"))
     else:
       return nn.emit(relax.op.ones_like(input_ids), dtype="bool")
 
