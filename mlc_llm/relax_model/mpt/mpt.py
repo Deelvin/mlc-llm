@@ -3,7 +3,7 @@ import warnings
 from typing import Optional, Tuple, List, Dict
 
 import tvm
-from tvm import relax, te
+from tvm import relax, tir, te
 from tvm.relax.testing import nn
 from tvm.script import relax as R
 
@@ -591,7 +591,7 @@ def build_attn_bias(attn_impl, attn_bias, n_heads, seq_len, causal=False, alibi=
 
 def get_type_min_val(tensor):
   return relax.const(
-      tvm.tir.min_value(tensor.struct_info.dtype).value,
+      tir.min_value(tensor.struct_info.dtype).value,
       tensor.struct_info.dtype,
   )
 
@@ -655,7 +655,8 @@ class MPTModel(nn.Module):
       if attn_bias is None:
         attn_bias = nn.emit(relax.op.zeros((1, 1, 1, s_k), dtype=dtype))
       else:
-        _s_k = relax.op.maximum(relax.const(0), relax.const(attn_bias.struct_info.shape.values[-1] - s_k))
+        #_s_k = relax.op.maximum(relax.const(0), relax.const(attn_bias.struct_info.shape.values[-1] - s_k))
+        _s_k = tir.max(tir.const(0), attn_bias.struct_info.shape.values[-1] - s_k)
         # slicing attn_bias[:, :, :, _s_k:]
         s_k_end = attn_bias.struct_info.shape[3]
         attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [3], [_s_k], [s_k_end]))
