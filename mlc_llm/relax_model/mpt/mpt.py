@@ -651,10 +651,12 @@ class MPTModel(nn.Module):
       self.attn_bias = nn.emit(relax.op.astype(self.attn_bias, dtype))
     attn_bias = self.attn_bias
     if attention_mask is not None:
+      print("ATTN MASK STRUCT INFO:", attention_mask.struct_info)
       s_k = attention_mask.struct_info.shape.values[-1]
       if attn_bias is None:
         attn_bias = nn.emit(relax.op.zeros((1, 1, 1, s_k), dtype=dtype))
       else:
+        print("ATTN BIAS STRUCT INFO:", attn_bias.struct_info)
         _s_k = relax.op.maximum(relax.const(0), nn.emit(attn_bias.struct_info.shape.values[-1] - s_k))
         # slicing attn_bias[:, :, :, _s_k:]
         s_k_end = attn_bias.struct_info.shape[3]
