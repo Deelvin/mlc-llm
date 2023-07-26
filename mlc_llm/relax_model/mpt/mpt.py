@@ -651,15 +651,14 @@ class MPTModel(nn.Module):
       self.attn_bias = nn.emit(relax.op.astype(self.attn_bias, dtype))
     attn_bias = self.attn_bias
     if attention_mask is not None:
-      s_k = attention_mask.struct_info.shape.values[-1]
+      s_k = attention_mask.struct_info.shape[1]
       if attn_bias is None:
         attn_bias = nn.emit(relax.op.zeros((1, 1, 1, s_k), dtype=dtype))
       else:
-        #_s_k = relax.op.maximum(relax.const(0), relax.const(attn_bias.struct_info.shape.values[-1] - s_k))
-        _s_k = tir.max(tir.const(0), attn_bias.struct_info.shape.values[-1] - s_k)
-        # slicing attn_bias[:, :, :, _s_k:]
         s_k_end = attn_bias.struct_info.shape[3]
-        attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [3], [_s_k], [s_k_end]))
+        # _s_k = relax.op.maximum(relax.const(0), s_k_end - s_k)
+        # slicing attn_bias[:, :, :, _s_k:]
+        attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [3], [s_k_end - s_k], [s_k_end]))
       min_val = get_type_min_val(attn_bias)
       attn_mask = nn.emit(relax.op.bitwise_not(relax.op.reshape(attention_mask, (-1, 1, 1, s_k))))
       attn_bias = nn.emit(relax.op.masked_fill(attn_bias, attn_mask, min_val))
