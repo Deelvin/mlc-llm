@@ -673,10 +673,6 @@ class MPTModel(nn.Module):
       attention_mask: Optional[relax.Expr]=None,
       use_cache: Optional[bool]=None
   ):
-    use_cache = use_cache if use_cache is not None else self.use_cache
-    if attention_mask is not None:
-      attention_mask = nn.emit(relax.op.astype(attention_mask, "bool"))
-
     S = input_ids.struct_info.shape[1]
     assert S <= self.max_seq_len, f'Cannot forward input with seq_len={S}, this model only supports seq_len<={self.max_seq_len}'
 
@@ -743,36 +739,23 @@ class MPTForCausalLM(nn.Module):
     else:
       return nn.emit(relax.op.ones_like(input_ids), dtype="bool")
 
-  def prepare_inputs_for_generation(self, input_ids, seq_len=None, past_key_values=None):
-    attention_mask = self.prepare_attention_mask_for_generation(input_ids, seq_len)
-
-    # TODO(vchernov): do we need it?
-    if past_key_values is not None:
-      # slicing input_ids[:, -1]
-      in_dim1_len = input_ids.struct_info.shape[1]
-      input_ids = nn.emit(
-        relax.op.expand_dims(relax.op.strided_slice(input_ids, [1], [in_dim1_len - 1], [in_dim1_len]), -1)
-      )
-    return {
-      'input_ids': input_ids,
-      'all_seq_len_shape': seq_len,
-      'past_key_values': past_key_values,
-      'attention_mask': attention_mask,
-      'use_cache': self.use_cache,
-    }
-
   def forward(
       self,
       input_ids: relax.Expr,
       all_seq_len_shape: Optional[relax.Expr]=None,
       past_key_values: Optional[relax.Expr]=None,
   ):
-    model_kwargs = self.prepare_inputs_for_generation(input_ids, all_seq_len_shape, past_key_values)
+    attention_mask = self.prepare_attention_mask_for_generation(input_ids, all_seq_len_shape)
 
     logits, key_value_cache = self.transformer(
-        **model_kwargs,
+      input_ids=input_ids,
+      all_seq_len_shape=all_seq_len_shape,
+      past_key_values=past_key_values,
+      attention_mask=attention_mask,
+      use_cache = self.use_cache,
     )
 
+    # TODO(vchernov): possibly it is general flow
     if past_key_values is not None:
       def te_slicing(x: te.Tensor):
           return te.compute(
