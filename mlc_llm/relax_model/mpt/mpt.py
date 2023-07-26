@@ -522,12 +522,12 @@ class MPTBlock(nn.Module):
       attention_mask=attention_mask,
       is_causal=is_causal
     )
-    # residual = nn.emit(residual + hidden_states)
+    residual = nn.emit(residual + hidden_states)
 
     # # Fully Connected
-    # hidden_states = self.norm_2(residual)
-    # hidden_states = self.ffn(hidden_states)
-    # hidden_states = nn.emit(residual + hidden_states)
+    hidden_states = self.norm_2(residual)
+    hidden_states = self.ffn(hidden_states)
+    hidden_states = nn.emit(residual + hidden_states)
 
     return hidden_states, present_key_value
 
@@ -719,7 +719,7 @@ class MPTModel(nn.Module):
       use_cache: Optional[bool]=None
   ):
     # return_dict = return_dict if return_dict is not None else self.return_dict
-    # use_cache = use_cache if use_cache is not None else self.use_cache
+    use_cache = use_cache if use_cache is not None else self.use_cache
     if attention_mask is not None:
       attention_mask = nn.emit(relax.op.astype(attention_mask, "bool"))
       # TODO(vchernov): I'm not sure we should calculate it and can compare in Relax
@@ -762,8 +762,6 @@ class MPTModel(nn.Module):
     #   pos_emb = self.wpe(pos)
     #   x = tok_emb + pos_emb
     (attn_bias, attention_mask) = self._attn_bias(dtype=x.struct_info.dtype, attention_mask=attention_mask, prefix_mask=prefix_mask, sequence_id=sequence_id)
-    # if use_cache and past_key_values is None:
-    #   past_key_values = [() for _ in range(self.n_layers)]
 
     # decoder layers
     if past_key_values is not None:
@@ -772,8 +770,6 @@ class MPTModel(nn.Module):
       next_decoder_cache = None
 
     for (b_idx, block) in enumerate(self.blocks):
-      if b_idx != 0:
-        break
       past_key_value = (past_key_values[b_idx * 2], past_key_values[b_idx * 2 + 1]) if past_key_values is not None else None
       x, key_value_cache = block(
         x,
@@ -785,11 +781,7 @@ class MPTModel(nn.Module):
       )
       if past_key_values is not None:
         next_decoder_cache += key_value_cache
-      # if b_idx == 0:
-      #   x = block.attn.out_proj(x)
-      # else:
-      #   continue
-    # x = self.norm_f(x)
+    x = self.norm_f(x)
     if past_key_values is not None:
       assert len(next_decoder_cache) == len(self.blocks) * 2
     return x, next_decoder_cache
@@ -817,7 +809,7 @@ class MPTForCausalLM(nn.Module):
       use_cache: Optional[bool]=None,
   ):
     # return_dict = return_dict if return_dict is not None else self.return_dict
-    # use_cache = use_cache if use_cache is not None else self.use_cache
+    use_cache = use_cache if use_cache is not None else self.use_cache
 
     # It is part from prepare_inputs_for_generation (see below te_slicing)
     # if past_key_values is not None:
@@ -846,7 +838,7 @@ class MPTForCausalLM(nn.Module):
 
       logits = nn.emit_te(te_slicing, logits, primfunc_name_hint="slice")
 
-    # logits = nn.emit(relax.op.linear(logits, self.transformer.wte.weight))
+    logits = nn.emit(relax.op.linear(logits, self.transformer.wte.weight))
 
     if logits.struct_info.dtype != "float32":
       logits = nn.emit(relax.op.astype(logits, "float32"))
