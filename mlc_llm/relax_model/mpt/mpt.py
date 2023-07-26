@@ -893,8 +893,8 @@ def get_model(args, hf_config):
 
   if args.max_seq_len is not None and args.max_seq_len > 0:
     max_seq_len = args.max_seq_len
-  elif hf_config.max_seq_len > 0:
-    max_seq_len = hf_config.max_seq_len
+  elif hf_config["max_seq_len"] > 0:
+    max_seq_len = hf_config["max_seq_len"]
   else:
     # Recommendation from https://huggingface.co/mosaicml/mpt-7b-instruct
     max_seq_len = 4096
