@@ -611,7 +611,6 @@ class MPTModel(nn.Module):
     self.n_heads = config.n_heads
     self.n_layers = config.n_layers
     self.max_seq_len = config.max_seq_len
-    self.return_dict = config.return_dict
     self.use_cache = config.use_cache
 
     self._attn_bias_initialized = False
@@ -639,7 +638,7 @@ class MPTModel(nn.Module):
     self.blocks = ModuleList([MPTBlock(config) for _ in range(config.n_layers)])
     self.norm_f = norm_class(config.d_model, dtype=config.dtype)
 
-  def _attn_bias(self, dtype, attention_mask: Optional[relax.Expr]=None, prefix_mask: Optional[relax.Expr]=None, sequence_id: Optional[relax.Expr]=None):
+  def _attn_bias(self, dtype, attention_mask: Optional[relax.Expr]=None):
     if not self._attn_bias_initialized:
       if self.attn_bias_shape:
         self.attn_bias = nn.emit(relax.op.zeros(self.attn_bias_shape, dtype=dtype))
@@ -652,13 +651,6 @@ class MPTModel(nn.Module):
     if self.attn_bias is not None:
       self.attn_bias = nn.emit(relax.op.astype(self.attn_bias, dtype))
     attn_bias = self.attn_bias
-    if self.prefix_lm:
-        assert isinstance(attn_bias, relax.Expr)
-        assert isinstance(prefix_mask, relax.Expr)
-        attn_bias = self._apply_prefix_mask(attn_bias, prefix_mask)
-    if self.attn_uses_sequence_id and sequence_id is not None:
-        assert isinstance(attn_bias, relax.Expr)
-        attn_bias = self._apply_sequence_id(attn_bias, sequence_id)
     if attention_mask is not None:
       s_k = attention_mask.struct_info.shape[-1]
       if attn_bias is None:
@@ -668,44 +660,10 @@ class MPTModel(nn.Module):
         # slicing attn_bias[:, :, :, _s_k:]
         s_k_end = attn_bias.struct_info.shape[3]
         attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [3], [_s_k], [s_k_end]))
-      if prefix_mask is not None and attention_mask.struct_info.shape != prefix_mask.struct_info.shape:
-        raise ValueError(f'attention_mask shape={attention_mask.shape} ' + f'and prefix_mask shape={prefix_mask.shape} are not equal.')
       min_val = get_type_min_val(attn_bias)
       attn_mask = nn.emit(relax.op.bitwise_not(relax.op.reshape(attention_mask, (-1, 1, 1, s_k))))
       attn_bias = nn.emit(relax.op.masked_fill(attn_bias, attn_mask, min_val))
     return (attn_bias, None)
-
-  def _apply_prefix_mask(self, attn_bias: relax.Expr, prefix_mask: relax.Expr):
-    s_k = attn_bias.struct_info.shape[-2]
-    s_q = attn_bias.struct_info.shape[-1]
-    if s_k != self.max_seq_len or s_q != self.max_seq_len:
-      raise ValueError('attn_bias does not match the expected shape. ' + f'The last two dimensions should both be {self.max_seq_len} ' + f'but are {s_k} and {s_q}.')
-    seq_len = prefix_mask.struct_info.shape[-1]
-    if seq_len > self.max_seq_len:
-      raise ValueError(f'prefix_mask sequence length cannot exceed max_seq_len={self.max_seq_len}')
-    # slicing attn_bias[..., :seq_len, :seq_len]
-    dims_len = attn_bias.struct_info.ndim
-    attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [dims_len - 2, dims_len - 1], [relax.const(0), relax.const(0)], [seq_len, seq_len]))
-    causal = nn.emit(relax.op.reshape(relax.op.tril(relax.op.ones((seq_len, seq_len), dtype="bool")), (1, 1, seq_len, seq_len)))
-    prefix = nn.emit(relax.op.reshape(prefix_mask, (-1, 1, 1, seq_len)))
-    cannot_attend = nn.emit(relax.op.bitwise_not(relax.op.logical_or(causal, relax.op.astype(prefix, "bool"))))
-    min_val = get_type_min_val(attn_bias)
-    attn_bias = nn.emit(relax.op.masked_fill(attn_bias, cannot_attend, min_val))
-    return attn_bias
-
-  def _apply_sequence_id(self, attn_bias: relax.Expr, sequence_id: relax.Expr):
-    seq_len = sequence_id.struct_info.shape[-1]
-    if seq_len > self.max_seq_len:
-      raise ValueError(f'sequence_id sequence length cannot exceed max_seq_len={self.max_seq_len}')
-    # slicing attn_bias[..., :seq_len, :seq_len]
-    dims_len = attn_bias.struct_info.ndim
-    attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [dims_len - 2, dims_len - 1], [relax.const(0), relax.const(0)], [seq_len, seq_len]))
-    seq_id_l = nn.emit(relax.op.reshape(sequence_id, (-1, seq_len, 1)))
-    seq_id_r = nn.emit(relax.op.reshape(sequence_id, (-1, 1, seq_len)))
-    cannot_attend = nn.emit(relax.op.expand_dims(relax.op.logical_not(relax.op.equal(seq_id_l, seq_id_r)), axis=1))
-    min_val = get_type_min_val(attn_bias)
-    attn_bias = nn.emit(relax.op.masked_fill(attn_bias, cannot_attend, min_val))
-    return attn_bias
 
   def forward(
       self,
@@ -713,28 +671,11 @@ class MPTModel(nn.Module):
       all_seq_len_shape: Optional[relax.Expr]=None,
       past_key_values: Optional[relax.Expr]=None,
       attention_mask: Optional[relax.Expr]=None,
-      prefix_mask: Optional[relax.Expr]=None,
-      sequence_id: Optional[relax.Expr]=None,
-      return_dict: Optional[bool]=None,
       use_cache: Optional[bool]=None
   ):
-    # return_dict = return_dict if return_dict is not None else self.return_dict
     use_cache = use_cache if use_cache is not None else self.use_cache
     if attention_mask is not None:
       attention_mask = nn.emit(relax.op.astype(attention_mask, "bool"))
-      # TODO(vchernov): I'm not sure we should calculate it and can compare in Relax
-      # It is part from prepare_inputs_for_generation
-      dim1_len = attention_mask.struct_info.shape[1]
-      if relax.op.sum(
-        relax.op.strided_slice(attention_mask, [1], [dim1_len - 1], [dim1_len])
-      ) != attention_mask.struct_info.shape[0]:
-        raise NotImplementedError('MPT does not support generation with right padding.')
-    # if prefix_mask is not None:
-    #   prefix_mask = nn.emit(relax.op.astype(prefix_mask, "bool"))
-    # if not return_dict:
-    #   raise NotImplementedError('return_dict False is not implemented yet for MPT')
-    # if self.prefix_lm and prefix_mask is None:
-    #   raise ValueError('prefix_mask is a required argument when MPT is configured with prefix_lm=True.')
 
     S = input_ids.struct_info.shape[1]
     assert S <= self.max_seq_len, f'Cannot forward input with seq_len={S}, this model only supports seq_len<={self.max_seq_len}'
@@ -761,7 +702,7 @@ class MPTModel(nn.Module):
     #     pos = nn.emit(relax.op.clip(pos - pos_diff, min=0))
     #   pos_emb = self.wpe(pos)
     #   x = tok_emb + pos_emb
-    (attn_bias, attention_mask) = self._attn_bias(dtype=x.struct_info.dtype, attention_mask=attention_mask, prefix_mask=prefix_mask, sequence_id=sequence_id)
+    (attn_bias, attention_mask) = self._attn_bias(dtype=x.struct_info.dtype, attention_mask=attention_mask)
 
     # decoder layers
     if past_key_values is not None:
@@ -794,38 +735,42 @@ class MPTForCausalLM(nn.Module):
     self.transformer = MPTModel(config)
     self.dtype = config.dtype
 
-    self.return_dict = config.return_dict
     self.use_cache = config.use_cache
+
+  def prepare_attention_mask_for_generation(self, input_ids=None, src_len=None):
+    if src_len is not None:
+      return nn.emit(relax.op.ones((1, src_len), dtype="bool"))
+    else:
+      return nn.emit(relax.op.ones_like(input_ids), dtype="bool")
+
+  def prepare_inputs_for_generation(self, input_ids, seq_len=None, past_key_values=None):
+    attention_mask = self.prepare_attention_mask_for_generation(input_ids, seq_len)
+
+    # TODO(vchernov): do we need it?
+    if past_key_values is not None:
+      # slicing input_ids[:, -1]
+      in_dim1_len = input_ids.struct_info.shape[1]
+      input_ids = nn.emit(
+        relax.op.expand_dims(relax.op.strided_slice(input_ids, [1], [in_dim1_len - 1], [in_dim1_len]), -1)
+      )
+    return {
+      'input_ids': input_ids,
+      'all_seq_len_shape': seq_len,
+      'past_key_values': past_key_values,
+      'attention_mask': attention_mask,
+      'use_cache': self.use_cache,
+    }
 
   def forward(
       self,
       input_ids: relax.Expr,
       all_seq_len_shape: Optional[relax.Expr]=None,
       past_key_values: Optional[relax.Expr]=None,
-      attention_mask: Optional[relax.Expr]=None,
-      prefix_mask: Optional[relax.Expr]=None,
-      sequence_id: Optional[relax.Expr]=None,
-      return_dict: Optional[bool]=None,
-      use_cache: Optional[bool]=None,
   ):
-    # return_dict = return_dict if return_dict is not None else self.return_dict
-    use_cache = use_cache if use_cache is not None else self.use_cache
+    model_kwargs = self.prepare_inputs_for_generation(input_ids, all_seq_len_shape, past_key_values)
 
-    # It is part from prepare_inputs_for_generation (see below te_slicing)
-    # if past_key_values is not None:
-    #   # slicing input_ids[:, -1]
-    #   dim1_len = input_ids.struct_info.shape[1]
-    #   input_ids_slice = nn.emit(relax.op.strided_slice(input_ids, [1], [dim1_len - 1], [dim1_len]))
-    #   input_ids = nn.emit(relax.op.expand_dims(input_ids_slice, axis=-1))
     logits, key_value_cache = self.transformer(
-        input_ids=input_ids,
-        all_seq_len_shape=all_seq_len_shape,
-        past_key_values=past_key_values,
-        attention_mask=attention_mask,
-        prefix_mask=prefix_mask,
-        sequence_id=sequence_id,
-        return_dict=True,
-        use_cache=use_cache,
+        **model_kwargs,
     )
 
     if past_key_values is not None:
