@@ -145,7 +145,6 @@ def scaled_multihead_dot_product_attention(
   v = nn.emit(relax.op.permute_dims(v, [0, 2, 1, 3]))
 
   attn_weight = nn.emit(relax.op.matmul(q, relax.op.permute_dims(k, [0, 1, 3, 2])) * softmax_scale)
-  print("ATTN WEIGHT INFO:", attn_weight.struct_info)
   # TODO(vchernov): attn_bias.shape is None due to it is not calculated in strided_slice with dynamic input
   # _, _, s_q_end, s_k_end = attn_bias.struct_info.shape # shape = [1, 32, 1, seq_len]
   if attn_bias is not None:
@@ -164,7 +163,6 @@ def scaled_multihead_dot_product_attention(
     if dtype != "float32":
       attn_bias = nn.emit(relax.op.astype(attn_bias, "float32"))
     attn_weight = nn.emit(attn_weight + attn_bias)
-    print("BIASED ATTN WEIGHT INFO:", attn_weight.struct_info)
   min_val = get_type_min_val(q)
   if key_padding_mask is not None:
     if attn_bias is not None:
@@ -187,11 +185,10 @@ def scaled_multihead_dot_product_attention(
   attn_weight = nn.emit(relax.op.nn.softmax(attn_weight))
   if dtype != "float32":
     attn_weight = nn.emit(relax.op.astype(attn_weight, dtype))
-  print("V INFO:", v.struct_info)
   out = nn.emit(relax.op.matmul(attn_weight, v))
 
   out = nn.emit(relax.op.permute_dims(out, [0, 2, 1, 3]))
-  out = nn.emit(relax.op.reshape(out, (b, 1, d_model)))
+  out = nn.emit(relax.op.reshape(out, (b, -1, relax.const(d_model))))
 
   return out, past_key_value
 
