@@ -652,8 +652,6 @@ class MPTModel(nn.Module):
     attn_bias = self.attn_bias
     if attention_mask is not None:
       s_k = attention_mask.struct_info.shape[1]
-      s_k_ = nn.emit(relax.op.shape_to_tensor(attention_mask.struct_info.shape))
-      print("Shape is tensor:", s_k_.struct_info)
       if attn_bias is None:
         attn_bias = nn.emit(relax.op.zeros((1, 1, 1, s_k), dtype=dtype))
       else:
@@ -662,7 +660,15 @@ class MPTModel(nn.Module):
         # slicing attn_bias[:, :, :, _s_k:]
         # attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [3], [s_k_end - s_k], [s_k_end]))
         zeros3 = relax.op.zeros((3,), dtype="int64")
-        start_point = relax.op.full((1,), s_k_end - s_k)
+        s_k_ = nn.emit(relax.op.shape_to_tensor(attention_mask.struct_info.shape))
+        print("Shape is tensor:", s_k_.struct_info)
+        s_k_ = nn.emit(relax.op.strided_slice(s_k_, [0], [1], [2]))
+        print("Shape is tensor:", s_k_.struct_info)
+        s_k_end_ = nn.emit(relax.op.shape_to_tensor(attn_bias.struct_info.shape))
+        print("Shape is tensor:", s_k_end_.struct_info)
+        s_k_end_ = nn.emit(relax.op.strided_slice(s_k_end_, [0], [3], [4]))
+        print("Shape is tensor:", s_k_end_.struct_info)
+        start_point = nn.emit(s_k_end_ - s_k_)
         begin_tensor = nn.emit(relax.op.concat([zeros3, start_point]))
         attn_bias = nn.emit(
           relax.op.dynamic_strided_slice(
