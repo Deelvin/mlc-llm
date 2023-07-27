@@ -658,28 +658,7 @@ class MPTModel(nn.Module):
         s_k_end = attn_bias.struct_info.shape[3]
         # _s_k = relax.op.maximum(relax.const(0), s_k_end - s_k)
         # slicing attn_bias[:, :, :, _s_k:]
-        # attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [3], [s_k_end - s_k], [s_k_end]))
-        zeros3 = relax.op.zeros((3,), dtype="int64")
-        s_k_ = nn.emit(relax.op.shape_to_tensor(attention_mask.struct_info.shape))
-        print("Shape is tensor:", s_k_.struct_info)
-        s_k_ = nn.emit(relax.op.strided_slice(s_k_, [0], [1], [2]))
-        print("Shape is tensor:", s_k_.struct_info)
-        s_k_end_ = nn.emit(relax.op.shape_to_tensor(attn_bias.struct_info.shape))
-        print("Shape is tensor:", s_k_end_.struct_info)
-        s_k_end_ = nn.emit(relax.op.strided_slice(s_k_end_, [0], [3], [4]))
-        print("Shape is tensor:", s_k_end_.struct_info)
-        start_point = nn.emit(s_k_end_ - s_k_)
-        begin_tensor = nn.emit(relax.op.concat([zeros3, start_point]))
-        end_tensor = nn.emit(relax.op.shape_to_tensor(attn_bias.struct_info.shape))
-        attn_bias = nn.emit(
-          relax.op.dynamic_strided_slice(
-            attn_bias,
-            begin_tensor,
-            end_tensor,
-            relax.op.ones((4,), dtype="int64")
-          )
-        )
-        print("ATTN BIAS INFO:", attn_bias.struct_info)
+        attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [3], [s_k_end - s_k], [s_k_end]))
       min_val = get_type_min_val(attn_bias)
       attn_mask = nn.emit(relax.op.bitwise_not(relax.op.reshape(attention_mask, (-1, 1, 1, s_k))))
       attn_bias = nn.emit(relax.op.masked_fill(attn_bias, attn_mask, min_val))
