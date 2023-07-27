@@ -188,7 +188,8 @@ def scaled_multihead_dot_product_attention(
   out = nn.emit(relax.op.matmul(attn_weight, v))
 
   out = nn.emit(relax.op.permute_dims(out, [0, 2, 1, 3]))
-  out = nn.emit(relax.op.reshape(out, (b, relax.const(1, dtype="int64"), relax.const(d_model, dtype="int64"))))
+  out_shape = R.shape([b, relax.const(1, dtype="int64"), relax.const(d_model, dtype="int64")])
+  out = nn.emit(relax.op.reshape(out, out_shape))
 
   return out, past_key_value
 
