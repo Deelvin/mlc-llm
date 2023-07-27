@@ -187,7 +187,7 @@ def scaled_multihead_dot_product_attention(
     # TODO(vchernov): matmul(q, k) generates inf when float16 is used.
     if dtype != "float32":
       attn_bias = nn.emit(relax.op.astype(attn_bias, "float32"))
-    attn_weight = attn_weight + attn_bias
+    attn_weight = nn.emit(attn_weight + attn_bias)
     print("BIASED ATTN WEIGHT INFO:", attn_weight.struct_info)
   min_val = get_type_min_val(q)
   if key_padding_mask is not None:
