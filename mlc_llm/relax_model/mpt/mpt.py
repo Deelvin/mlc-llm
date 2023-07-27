@@ -57,30 +57,6 @@ def _reset_is_causal(num_query_tokens: int, num_key_tokens: int, original_is_cau
   return original_is_causal
 
 
-def reshape_and_permute(hidden_states: relax.Expr, n_heads: int, d_model: int, indeces: List[int] = [0, 2, 1, 3]):
-  '''
-  Transform shape of input: b s (h d) -> b s h d -> b h s d  or  b h d s
-  '''
-  batch_size, seqlen, _ = hidden_states.struct_info.shape
-  inter = nn.emit(relax.op.reshape(
-      hidden_states,
-      (batch_size, seqlen, n_heads, int(d_model / n_heads)),
-  ))
-  return nn.emit(relax.op.permute_dims(inter, indeces))
-
-
-def reverse_reshape_and_permute(hidden_states: relax.Expr):
-  '''
-  Transform shape of input: b h s d -> b s (h d)
-  '''
-  batch_size, n_heads, seqlen, head_len = hidden_states.struct_info.shape
-  inter = nn.emit(relax.op.permute_dims(hidden_states, [0, 2, 1, 3]))
-  return nn.emit(relax.op.reshape(
-      inter,
-      (batch_size, seqlen, n_heads*head_len),
-  ))
-
-
 ######################### FLASH ATTENTION IMPLEMENTATION TYPE TORCH (BEGIN) ##########################
 
 def scaled_multihead_dot_product_attention(
@@ -213,7 +189,9 @@ def scaled_multihead_dot_product_attention(
     attn_weight = nn.emit(relax.op.astype(attn_weight, dtype))
   print("V INFO:", v.struct_info)
   out = nn.emit(relax.op.matmul(attn_weight, v))
-  out = reverse_reshape_and_permute(out)
+
+  out = nn.emit(relax.op.permute_dims(out, [0, 2, 1, 3]))
+  out = nn.emit(relax.op.reshape(out, (b, 1, d_model)))
 
   return out, past_key_value
 
