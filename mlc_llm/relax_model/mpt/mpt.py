@@ -679,6 +679,7 @@ class MPTModel(nn.Module):
             relax.op.ones((4,), dtype="int64")
           )
         )
+        print("ATTN BIAS INFO:", attn_bias.struct_info)
       min_val = get_type_min_val(attn_bias)
       attn_mask = nn.emit(relax.op.bitwise_not(relax.op.reshape(attention_mask, (-1, 1, 1, s_k))))
       attn_bias = nn.emit(relax.op.masked_fill(attn_bias, attn_mask, min_val))
