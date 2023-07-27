@@ -104,8 +104,8 @@ def scaled_multihead_dot_product_attention(
   assert b == 1, "Only support batch size 1 at this moment."
 
   q = nn.emit(relax.op.reshape(query, (b, s_q, n_heads, head_dim)))
-  k = nn.emit(relax.op.reshape(key, (b, s_q, n_heads, head_dim)))
-  v = nn.emit(relax.op.reshape(value, (b, s_q, n_heads, head_dim)))
+  k = nn.emit(relax.op.reshape(key, (b, -1, n_heads, head_dim)))
+  v = nn.emit(relax.op.reshape(value, (b, -1, n_heads, head_dim)))
 
   if past_key_value is not None:
     kv_seq_len = all_seq_len_shape.struct_info.values[0]
@@ -155,7 +155,7 @@ def scaled_multihead_dot_product_attention(
     )
     k = nn.emit(relax.op.reshape(k_cache, kv_shape))
     v = nn.emit(relax.op.reshape(v_cache, kv_shape))
-  s_k = k.struct_info.shape[2]
+  s_k = k.struct_info.shape[1]
   if softmax_scale is None:
     softmax_scale = 1 / math.sqrt(head_dim)
   # TODO(vchernov): matmul(q, k) generates inf when float16 is used. There is workaround
@@ -169,17 +169,20 @@ def scaled_multihead_dot_product_attention(
   v = nn.emit(relax.op.permute_dims(v, [0, 2, 1, 3]))
 
   attn_weight = nn.emit(relax.op.matmul(q, relax.op.permute_dims(k, [0, 1, 3, 2])) * softmax_scale)
-  _, _, s_q_end, s_k_end = attn_bias.struct_info.shape
+  # TODO(vchernov): attn_bias.shape is None due to it is not calculated in strided_slice with dynamic input
+  # _, _, s_q_end, s_k_end = attn_bias.struct_info.shape # shape = [1, 32, 1, seq_len]
   if attn_bias is not None:
-    _s_q = relax.op.maximum(0, s_q_end - s_q)
-    _s_k = relax.op.maximum(0, s_k_end - s_k)
+    # s_q = 1 for use_cache = True and = seq_len otherwise
+    # s_k = seq_len always
+    # TODO(vchernov): _s_q, _s_k can not be calculated due to reason above, but
+    # Trivial symbolic arithmetic shows that:
+    # _s_q = 0 always (s_q_end - s_q <= 0)
+    # _s_k = 0
+    # _s_q = relax.op.maximum(0, s_q_end - s_q)
+    # _s_k = relax.op.maximum(0, s_k_end - s_k)
+    # TODO(vchernov): due to _s_q = 0 and _s_k = 0 the below slicing can be skipped
     # slicing attn_bias[:, :, _s_q:, _s_k:]
-    attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [2, 3], [_s_q, _s_k], [s_q_end, s_k_end]))
-    if (attn_bias.struct_info.shape[-1] != 1 and
-        attn_bias.struct_info.shape[-1] != s_k or # dynamic condition?
-        (attn_bias.struct_info.shape[-2] != 1 and
-          attn_bias.struct_info.shape[-2] != s_q)): # dynamic condition?
-      raise RuntimeError(f'attn_bias (shape: {attn_bias.struct_info.shape}) is expected to broadcast to shape: {attn_weight.struct_info.shape}.')
+    # attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [2, 3], [_s_q, _s_k], [s_q_end, s_k_end]))
     # TODO(vchernov): matmul(q, k) generates inf when float16 is used.
     if dtype != "float32":
       attn_bias = nn.emit(relax.op.astype(attn_bias, "float32"))
@@ -651,13 +654,15 @@ class MPTModel(nn.Module):
       self.attn_bias = nn.emit(relax.op.astype(self.attn_bias, dtype))
     attn_bias = self.attn_bias
     if attention_mask is not None:
-      s_k = attention_mask.struct_info.shape[1]
+      s_k = attention_mask.struct_info.shape[1] # seq_len
       if attn_bias is None:
         attn_bias = nn.emit(relax.op.zeros((1, 1, 1, s_k), dtype=dtype))
       else:
-        s_k_end = attn_bias.struct_info.shape[3]
+        s_k_end = attn_bias.struct_info.shape[3]  # config.max_seq_len = 2048
+        # TODO(vchernov): it can not be calculated in relax
         # _s_k = relax.op.maximum(relax.const(0), s_k_end - s_k)
         # slicing attn_bias[:, :, :, _s_k:]
+        # Need to use _s_k instead of s_k_end - s_k (attn_bias.shape = [1, 32, 1, seq_len])
         attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [3], [s_k_end - s_k], [s_k_end]))
       min_val = get_type_min_val(attn_bias)
       attn_mask = nn.emit(relax.op.bitwise_not(relax.op.reshape(attention_mask, (-1, 1, 1, s_k))))
