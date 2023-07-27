@@ -650,8 +650,6 @@ class MPTModel(nn.Module):
     if self.attn_bias is not None:
       self.attn_bias = nn.emit(relax.op.astype(self.attn_bias, dtype))
     attn_bias = self.attn_bias
-    print("ORIG ATTN BIAS INFO:", attn_bias.struct_info)
-    print("ORIG ATTN MASK INFO:", attention_mask.struct_info)
     if attention_mask is not None:
       s_k = attention_mask.struct_info.shape[1]
       if attn_bias is None:
@@ -660,13 +658,21 @@ class MPTModel(nn.Module):
         s_k_end = attn_bias.struct_info.shape[3]
         # _s_k = relax.op.maximum(relax.const(0), s_k_end - s_k)
         # slicing attn_bias[:, :, :, _s_k:]
-        attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [3], [s_k_end - s_k], [s_k_end]))
-      print("UPDATED ATTN BIAS INFO:", attn_bias.struct_info)
+        # attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [3], [s_k_end - s_k], [s_k_end]))
+        zeros3 = relax.op.zeros((3,), dtype="int64")
+        start_point = relax.op.full((1,), s_k_end - s_k)
+        begin_tensor = nn.emit(relax.op.concat([zeros3, start_point]))
+        attn_bias = nn.emit(
+          relax.op.dynamic_strided_slice(
+            attn_bias,
+            begin_tensor,
+            attn_bias.struct_info.shape,
+            relax.op.ones((4,), dtype="int64")
+          )
+        )
       min_val = get_type_min_val(attn_bias)
       attn_mask = nn.emit(relax.op.bitwise_not(relax.op.reshape(attention_mask, (-1, 1, 1, s_k))))
-      print("NEW ATTN MASK INFO:", attn_mask.struct_info)
       attn_bias = nn.emit(relax.op.masked_fill(attn_bias, attn_mask, min_val))
-      print("MASKED FILL ATTN BIAS INFO:", attn_bias.struct_info)
     return (attn_bias, None)
 
   def forward(
