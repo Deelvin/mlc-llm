@@ -268,9 +268,10 @@ class LLMChat {
     fsample_topp_from_logits_ = *fsample_topp_from_logits_ptr;
 
     // Step 3. Load params in nd-array cache.
+    String params_path = model_path + "/transform_params";
     const PackedFunc* fload_cache = tvm::runtime::Registry::Get("vm.builtin.ndarray_cache.load");
     ICHECK(fload_cache) << "TVM runtime cannot find vm.builtin.ndarray_cache.load";
-    (*fload_cache)(model_path, static_cast<int32_t>(device_.device_type), device_.device_id);
+    (*fload_cache)(params_path, static_cast<int32_t>(device_.device_type), device_.device_id);
 
     const PackedFunc* fload_params =
         tvm::runtime::Registry::Get("vm.builtin.param_array_from_cache");

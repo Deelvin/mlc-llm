@@ -136,4 +136,5 @@ quantization_schemes = {
         linear_weight=RWKVQuantizationSpec(dtype="float16", mode="uint8", nbit=8),
         final_fc_weight="same_as_linear_weight",
     ),
+    "a8q8f16": QuantizationScheme("a8q8f16", NoQuantizationSpec("float16")),
 }

@@ -927,13 +927,21 @@ def get_model(args, hf_config):
             raise ValueError("Unexpected param loading")
         return np.concatenate(torch_params, axis=0).astype(dtype)
 
-    mod = param_manager.transform_module(
-        mod,
-        args.model_path,
-        f_convert_pname_fwd,
-        f_convert_param_bkwd,
-        f_compute_relax_param,
-    )
+    if args.quantization.name == "a8q8f16":
+        param_manager.setup_param_fields(
+            args.model_path,
+            f_convert_pname_fwd,
+            f_convert_param_bkwd,
+            f_compute_relax_param,
+        )
+    else:
+        mod = param_manager.transform_module(
+            mod,
+            args.model_path,
+            f_convert_pname_fwd,
+            f_convert_param_bkwd,
+            f_compute_relax_param,
+        )
 
     device = tvm.cpu()
     param_list = [None] * len(param_manager.param_names)

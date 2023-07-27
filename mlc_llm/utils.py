@@ -91,20 +91,20 @@ def split_transform_deploy_mod(
     mod_transform = tvm.IRModule()
     mod_deploy = tvm.IRModule()
     transform_func_name = "transform_params"
+    transform_func_names=[]
 
     for gv in mod.functions:
         func = mod[gv]
         if isinstance(func, tvm.tir.PrimFunc):
             mod_transform[gv] = func
             mod_deploy[gv] = func
-        elif gv.name_hint == transform_func_name:
+        elif transform_func_name in gv.name_hint:
             mod_transform[gv] = func
+            transform_func_names.append(gv.name_hint)
         else:
             mod_deploy[gv] = func
 
-    mod_transform = relax.transform.DeadCodeElimination([transform_func_name])(
-        mod_transform
-    )
+    mod_transform = relax.transform.DeadCodeElimination(transform_func_names)(mod_transform)
     mod_deploy = relax.transform.DeadCodeElimination(model_names)(mod_deploy)
 
     return mod_transform, mod_deploy
@@ -126,6 +126,10 @@ def transform_params(
     cached_relax_params: Dict[int, tvm.nd.NDArray] = {}
     cached_torch_params: Dict[str, Any] = {}
 
+    transform_func_names=[gv.name_hint for gv in mod_transform.functions]
+    assert len(transform_func_names) == 1, "can't compute weights with multiple transform_params funcs"
+    transform_func_name = transform_func_names[0]
+
     get_item, set_item = param_manager.get_param_loading_functions(
         model_params,
         loaded_params,
@@ -146,7 +150,7 @@ def transform_params(
     ex = relax.build(mod_transform, target=target)
     vm = relax.vm.VirtualMachine(ex, device)
     print("Start computing and quantizing weights... This may take a while.")
-    vm["transform_params"]()
+    vm[transform_func_name]()
     print("Finish computing and quantizing weights.")
     return loaded_params
 
@@ -165,14 +169,14 @@ def save_params(params: List[tvm.nd.NDArray], artifact_path: str) -> None:
     total_size = total_size / 1024.0 / 1024.0 / 1024.0
     print(f"Total param size: {total_size} GB")
     tvmjs.dump_ndarray_cache(
-        param_dict, f"{artifact_path}/params", meta_data=meta_data, encode_format="raw"
+        param_dict, f"{artifact_path}", meta_data=meta_data, encode_format="raw"
     )
 
 
 def load_params(artifact_path: str, device) -> List[tvm.nd.NDArray]:
     from tvm.contrib import tvmjs  # pylint: disable=import-outside-toplevel
 
-    params, meta = tvmjs.load_ndarray_cache(f"{artifact_path}/params", device)
+    params, meta = tvmjs.load_ndarray_cache(f"{artifact_path}", device)
     plist = []
     size = meta["ParamSize"]
     for i in range(size):

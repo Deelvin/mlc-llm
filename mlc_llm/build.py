@@ -298,7 +298,6 @@ def mod_transform_before_build(
         ]
         if args.sep_embed:
             model_names = ["embed", "prefill_with_embed"] + model_names[1:]
-    assert "transform_params" in [gv.name_hint for gv in mod.get_global_vars()]
 
     mod = mlc_llm.transform.FuseDecodeTranspose()(mod)  # pylint: disable=not-callable
     mod = mlc_llm.transform.FuseTransposeMatmul()(mod)  # pylint: disable=not-callable
@@ -307,15 +306,30 @@ def mod_transform_before_build(
         args.quantization.name, args.target_kind
     )(mod)
     mod = mlc_llm.transform.FuseDecodeTake()(mod)
-    mod = relax.transform.DeadCodeElimination(model_names + ["transform_params"])(mod)
-    mod = mlc_llm.transform.CleanUpTIRAttrs()(mod)
-    mod_transform, mod_deploy = utils.split_transform_deploy_mod(mod, model_names)
+    if args.quantization.name == "a8q8f16":
+        mod = relax.transform.DeadCodeElimination(model_names)(mod)
+        mod = mlc_llm.transform.CleanUpTIRAttrs()(mod)
+        mod = relax.transform.LiftTransformParams()(mod)
+        mod_transform, mod_deploy = utils.split_transform_deploy_mod(mod, model_names)
+        mod_transform = relax.transform.ToNonDataflow()(mod_transform)
+        mod_transform = relax.transform.LazyTransformParams()(mod_transform)
+    else:
+        assert "transform_params" in [gv.name_hint for gv in mod.get_global_vars()]
+        mod = relax.transform.DeadCodeElimination(model_names + ["transform_params"])(mod)
+        mod = mlc_llm.transform.CleanUpTIRAttrs()(mod)
+        mod_transform, mod_deploy = utils.split_transform_deploy_mod(mod, model_names)
 
     debug_dump_script(mod_transform, "mod_lift_params.py", args)
     debug_dump_script(mod_deploy, "mod_deploy.py", args)
 
-    new_params = utils.transform_params(mod_transform, param_manager, model_params)
-    utils.save_params(new_params, args.artifact_path)
+    for gv in mod_transform.functions:
+        func_name  = gv.name_hint
+        mod_single_func = tvm.IRModule({tvm.ir.GlobalVar(func_name): mod_transform[func_name]})
+        new_params = utils.transform_params(mod_single_func, param_manager, model_params)
+        utils.save_params(new_params, os.path.join(args.artifact_path, "params", func_name))
+        # Free memory before next iteration:
+        new_params.clear()
+
     return mod_deploy
 
 

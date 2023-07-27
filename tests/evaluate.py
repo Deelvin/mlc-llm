@@ -107,7 +107,18 @@ def print_as_table(sorted_list: List[Tuple[str, Tuple[float, int]]]):
 
 def deploy_to_pipeline(args) -> None:  # pylint: disable=too-many-locals
     device = tvm.device(args.device_name)
-    const_params = utils.load_params(args.artifact_path, device)
+    #const_params = utils.load_params(args.artifact_path, device)
+    en_path = os.path.join(args.artifact_path, "params", "prefill_transform_params")
+    de_path = os.path.join(args.artifact_path, "params", "decode_transform_params")
+    if os.path.exists(en_path) and os.path.exists(de_path):
+        prefill_const_params = utils.load_params(en_path, device)
+        decode_const_params = utils.load_params(de_path, device)
+    else:
+        path = os.path.join(args.artifact_path, "params", "transform_params")
+        assert os.path.exists(path)
+        const_params = utils.load_params(path, device)
+        prefill_const_params = const_params
+        decode_const_params = const_params
     ex = tvm.runtime.load_module(
         os.path.join(
             args.artifact_path,
@@ -143,21 +154,23 @@ def deploy_to_pipeline(args) -> None:  # pylint: disable=too-many-locals
     kv_caches = vm["create_kv_cache"]()
     # skip warm up
 
-    logits, kv_caches = vm["prefill"](inputs, seq_len_shape, kv_caches, const_params)
+    logits, kv_caches = vm["prefill"](inputs, seq_len_shape, kv_caches, prefill_const_params)
     logits, kv_caches = vm["decode"](
-        first_sampled_token, second_seq_len_shape, kv_caches, const_params
+        first_sampled_token, second_seq_len_shape, kv_caches, decode_const_params
     )
     device.sync()
 
     kv_caches = vm["create_kv_cache"]()
     print("Running inference...")
     start = time.time()
-    logits, kv_caches = vm["prefill"](inputs, seq_len_shape, kv_caches, const_params)
+    logits, kv_caches = vm["prefill"](inputs, seq_len_shape, kv_caches, prefill_const_params)
+    print(logits)
     device.sync()
     encoding_end = time.time()
     logits, kv_caches = vm["decode"](
-        first_sampled_token, second_seq_len_shape, kv_caches, const_params
+        first_sampled_token, second_seq_len_shape, kv_caches, decode_const_params
     )
+    print(logits)
     device.sync()
     end = time.time()
     fcache_view = tvm.get_global_func("vm.builtin.attention_kv_cache_view")
@@ -178,7 +191,7 @@ def deploy_to_pipeline(args) -> None:  # pylint: disable=too-many-locals
         kv_caches = vm["create_kv_cache"]()
 
         logits, kv_caches = vm["prefill"](
-            inputs, seq_len_shape, kv_caches, const_params
+            inputs, seq_len_shape, kv_caches, prefill_const_params
         )
         print("======================= Encoding Profiling =======================")
         print_as_table(
@@ -190,7 +203,7 @@ def deploy_to_pipeline(args) -> None:  # pylint: disable=too-many-locals
         cmp_instrument.time_eval_results.clear()
 
         logits, kv_caches = vm["decode"](
-            first_sampled_token, second_seq_len_shape, kv_caches, const_params
+            first_sampled_token, second_seq_len_shape, kv_caches, decode_const_params
         )
         print("======================= Decoding Profiling =======================")
         print_as_table(
