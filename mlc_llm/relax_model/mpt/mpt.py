@@ -652,6 +652,8 @@ class MPTModel(nn.Module):
     attn_bias = self.attn_bias
     if attention_mask is not None:
       s_k = attention_mask.struct_info.shape[1]
+      s_k_ = relax.op.shape_to_tensor(attention_mask.struct_info.shape)
+      print("Shape is tensor:", s_k_.struct_info)
       if attn_bias is None:
         attn_bias = nn.emit(relax.op.zeros((1, 1, 1, s_k), dtype=dtype))
       else:
