@@ -670,11 +670,12 @@ class MPTModel(nn.Module):
         print("Shape is tensor:", s_k_end_.struct_info)
         start_point = nn.emit(s_k_end_ - s_k_)
         begin_tensor = nn.emit(relax.op.concat([zeros3, start_point]))
+        end_tensor = nn.emit(relax.op.shape_to_tensor(attn_bias.struct_info.shape))
         attn_bias = nn.emit(
           relax.op.dynamic_strided_slice(
             attn_bias,
             begin_tensor,
-            attn_bias.struct_info.shape,
+            end_tensor,
             relax.op.ones((4,), dtype="int64")
           )
         )
