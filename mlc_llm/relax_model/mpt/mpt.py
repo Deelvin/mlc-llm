@@ -884,7 +884,7 @@ def get_model(args, hf_config):
     max_seq_len = 4096
 
   hf_config.update({"max_seq_len": max_seq_len})
-  hf_config.update({"use_cache": True})
+  hf_config.update({"use_cache": args.use_kv_cache})
   # hf_config.update({"max_new_tokens": args.seq_len})
 
   config = MPTConfig(**hf_config, dtype=dtype)
