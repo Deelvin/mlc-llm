@@ -740,16 +740,14 @@ class MPTForCausalLM(nn.Module):
       use_cache = self.use_cache,
     )
 
-    # TODO(vchernov): possibly it is general flow
-    if past_key_values is not None:
-      def te_slicing(x: te.Tensor):
-          return te.compute(
-              shape=(1, 1, x.shape[-1]),
-              fcompute=lambda i, j, k: x[i, x.shape[1] - 1, k],
-              name="slice",
-          )
+    def te_slicing(x: te.Tensor):
+        return te.compute(
+            shape=(1, 1, x.shape[-1]),
+            fcompute=lambda i, j, k: x[i, x.shape[1] - 1, k],
+            name="slice",
+        )
 
-      logits = nn.emit_te(te_slicing, logits, primfunc_name_hint="slice")
+    logits = nn.emit_te(te_slicing, logits, primfunc_name_hint="slice")
 
     logits = nn.emit(relax.op.linear(logits, self.transformer.wte.weight))
 
@@ -830,9 +828,12 @@ def create_decoding_func_with_kv_cache(bb: relax.BlockBuilder, config: MPTConfig
 
 def create_decoding_func_wo_kv_cache(bb: relax.BlockBuilder, config: MPTConfig) -> Dict[int, str]:
   pidx2pname: Dict[int, str] = {}
+  bsz = 1
+  seq_len = tvm.tir.Var("n", "int64")
+
   with bb.function("decode"):
     model = MPTForCausalLM(config)
-    input_ids = nn.Placeholder((1, 1), dtype="int32", name="input_ids")
+    input_ids = nn.Placeholder((bsz, seq_len), dtype="int32", name="input_ids")
 
     with bb.dataflow():
       logits, states = model(input_ids)
