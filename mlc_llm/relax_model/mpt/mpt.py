@@ -655,9 +655,6 @@ class MPTModel(nn.Module):
       attention_mask: Optional[relax.Expr]=None,
       use_cache: Optional[bool]=None
   ):
-    S = input_ids.struct_info.shape[1]
-    assert S <= self.max_seq_len, f'Cannot forward input with seq_len={S}, this model only supports seq_len<={self.max_seq_len}'
-
     tok_emb = self.wte(input_ids)
     if self.alibi:
       x = tok_emb
