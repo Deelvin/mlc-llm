@@ -170,16 +170,19 @@ def scaled_multihead_dot_product_attention(
     key_mask = nn.emit(relax.op.bitwise_not(relax.op.reshape(key_padding_mask, (b, 1, 1, s_k))))
     attn_weight = nn.emit(relax.op.masked_fill(attn_weight, key_mask, min_val))
   if is_causal and (not q.struct_info.shape[2] == 1):
-      s = relax.op.maximum(s_q, s_k)
-      causal_mask = nn.emit(relax.op.ones((s, s,), dtype="float16"))
-      causal_mask = nn.emit(relax.op.tril(causal_mask))
-      causal_mask = nn.emit(relax.op.astype(causal_mask, "bool"))
-      causal_mask = nn.emit(relax.op.bitwise_not(causal_mask))
-      # slicing causal_mask[-s_q:, -s_k:]
-      s_q_end, s_k_end = causal_mask.struct_info.shape
-      causal_mask = nn.emit(relax.op.strided_slice(causal_mask, [0, 1], [s_q_end - s_q, s_k_end - s_k], [s_q_end, s_k_end]))
-      causal_mask = nn.emit(relax.op.reshape(causal_mask, (1, 1, s_q, s_k)))
-      attn_weight = nn.emit(relax.op.masked_fill(attn_weight, causal_mask, min_val))
+    # It is the case where is no kv cache, thus s_q == s_k
+    # s = relax.op.maximum(s_q, s_k)
+    s = s_q
+    causal_mask = nn.emit(relax.op.ones((s, s,), dtype="float16"))
+    causal_mask = nn.emit(relax.op.tril(causal_mask))
+    causal_mask = nn.emit(relax.op.astype(causal_mask, "bool"))
+    causal_mask = nn.emit(relax.op.bitwise_not(causal_mask))
+    # Due to the case the slicing below can be skipped
+    # slicing causal_mask[-s_q:, -s_k:]
+    # s_q_end, s_k_end = causal_mask.struct_info.shape
+    # causal_mask = nn.emit(relax.op.strided_slice(causal_mask, [0, 1], [s_q_end - s_q, s_k_end - s_k], [s_q_end, s_k_end]))
+    causal_mask = nn.emit(relax.op.reshape(causal_mask, (1, 1, s_q, s_k)))
+    attn_weight = nn.emit(relax.op.masked_fill(attn_weight, causal_mask, min_val))
   # TODO(vchernov): matmul(q, k) generates inf when float16 is used.
   # There is uncast after workaround with float calculation due to softmax range = [0, 1]
   attn_weight = nn.emit(relax.op.nn.softmax(attn_weight))
