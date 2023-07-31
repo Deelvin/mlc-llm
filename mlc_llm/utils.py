@@ -85,6 +85,16 @@ def argparse_postproc_common(args: argparse.Namespace) -> None:
     args.quantization = quantization_schemes[args.quantization]
 
 
+def extract_transform_mod(mod: tvm.IRModule, func_name: str) -> tvm.IRModule:
+    mod_transform = tvm.IRModule({tvm.ir.GlobalVar(func_name): mod[func_name]})
+    for gv in mod.functions:
+        func = mod[gv]
+        if isinstance(func, tvm.tir.PrimFunc):
+            mod_transform[gv] = func
+    mod_transform = relax.transform.DeadCodeElimination([func_name])(mod_transform)
+    return mod_transform
+
+
 def split_transform_deploy_mod(
     mod: tvm.IRModule, model_names: List[str]
 ) -> Tuple[tvm.IRModule, tvm.IRModule]:
@@ -112,6 +122,7 @@ def split_transform_deploy_mod(
 
 def transform_params(
     mod_transform: tvm.IRModule,
+    transform_func_name: str,
     param_manager: param_manager.ParamManager,
     model_params: List[Optional[tvm.nd.NDArray]],
 ) -> List[tvm.nd.NDArray]:
@@ -125,10 +136,6 @@ def transform_params(
     loaded_torch_bins: Set[str] = set()
     cached_relax_params: Dict[int, tvm.nd.NDArray] = {}
     cached_torch_params: Dict[str, Any] = {}
-
-    transform_func_names=[gv.name_hint for gv in mod_transform.functions]
-    assert len(transform_func_names) == 1, "can't compute weights with multiple transform_params funcs"
-    transform_func_name = transform_func_names[0]
 
     get_item, set_item = param_manager.get_param_loading_functions(
         model_params,
@@ -218,6 +225,9 @@ def split_static_dynamic_tir(mod: tvm.IRModule):
 
 
 def copy_tokenizer(args: argparse.Namespace) -> None:
+    dst_dir = os.path.join(args.artifact_path, "params")
+    if not os.path.exists(dst_dir):
+        os.makedirs(dst_dir)
     for filename in os.listdir(args.model_path):
         if filename in [
             "tokenizer.model",
@@ -227,10 +237,7 @@ def copy_tokenizer(args: argparse.Namespace) -> None:
             "added_tokens.json",
             "tokenizer_config.json",
         ]:
-            shutil.copy(
-                os.path.join(args.model_path, filename),
-                os.path.join(args.artifact_path, "params"),
-            )
+            shutil.copy(os.path.join(args.model_path, filename), dst_dir)
 
 
 def get_tokenizer_files(path) -> List[str]:

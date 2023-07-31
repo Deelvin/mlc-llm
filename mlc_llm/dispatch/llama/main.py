@@ -1,6 +1,7 @@
 import tvm
 from tvm import IRModule
 from tvm.script import tir as T
+from tvm.tir.tensor_intrin.cuda import *
 
 
 # fmt: off
@@ -6613,6 +6614,295 @@ def fused_decode6_fused_matmul9_add3_int3_int16_fp16_after(lv1158: T.Buffer((T.i
                         T.reads(lv4[v0, v1, v2], var_matmul_intermediate_local[v0, v1, v2])
                         T.writes(p_output0_intermediate[v0, v1, v2])
                         p_output0_intermediate[v0, v1, v2] = lv4[v0, v1, v2] + var_matmul_intermediate_local[v0, v1, v2]
+
+
+def apply_trace_matmul_dyn(sch: tvm.tir.Schedule) -> None:
+    b0 = sch.get_block(name="NT_matmul", func_name="main")
+    b1 = sch.get_block(name="root", func_name="main")
+    sch.annotate(block_or_loop=b0, ann_key="meta_schedule.tiling_structure", ann_val="SSSRRSRS")
+    b2 = sch.reindex(block=b0, buffer=("write", 0))
+    b3 = sch.reindex(block=b0, buffer=("read", 0))
+    b4 = sch.reindex(block=b0, buffer=("read", 1))
+    sch.transform_layout(block=b0, buffer=("read", 0), index_map=lambda v_i0, v_k: (v_i0, v_k,), pad_value=None, assume_injective_transform=False)
+    sch.transform_layout(block=b0, buffer=("read", 1), index_map=lambda v_i1, v_k: (v_i1, v_k,), pad_value=None, assume_injective_transform=False)
+    sch.transform_layout(block=b0, buffer=("write", 0), index_map=lambda v_i0, v_i1: (v_i0, v_i1,), pad_value=None, assume_injective_transform=False)
+    sch.transform_block_layout(block=b2, index_map=lambda v_i0, v_i1: (v_i0, v_i1,))
+    sch.transform_block_layout(block=b3, index_map=lambda v_i0, v_k: (v_i0, v_k,))
+    sch.transform_block_layout(block=b4, index_map=lambda v_i1, v_k: (v_i1, v_k,))
+    sch.transform_block_layout(block=b0, index_map=lambda v_i0, v_i1, v_k: (v_i0, v_i1, v_k,))
+
+    ################################################################################################
+    sch.pad_einsum(b0, (32, 16, 16))
+    ################################################################################################
+
+    l5, l6, l7 = sch.get_loops(block=b0)
+    l8, l9 = sch.split(loop=l7, factors=[None, 16], preserve_unit_iters=True)
+    l10, l11 = sch.split(loop=l6, factors=[None, 16], preserve_unit_iters=True)
+    l12, l13 = sch.split(loop=l5, factors=[None, 16], preserve_unit_iters=True)
+    l14, l15, l16, l17, l18, l19 = sch.get_loops(block=b0)
+    sch.reorder(l16, l18, l13, l11, l9)
+    b20 = sch.blockize(target=l13, preserve_unit_iters=True)
+    sch.annotate(block_or_loop=b20, ann_key="meta_schedule.auto_tensorize", ann_val="wmma_sync_16x16x16_s8s8s32_trans")
+    sch.annotate(block_or_loop=b20, ann_key="meta_schedule.auto_tensorize_init", ann_val="wmma_fill_16x16x16_s32")
+    sch.annotate(block_or_loop=b20, ann_key="warp_execution", ann_val=1)
+    l21, l22, l23 = sch.get_loops(block=b20)
+
+    ################################################################################################
+    #v24, v25, v26, v27, v28 = sch.sample_perfect_tile(loop=l21, n=5, max_innermost_factor=4, decision=[1, 1, 2, 1, 1])
+    #l29, l30, l31, l32, l33 = sch.split(loop=l21, factors=[v24, v25, v26, v27, v28], preserve_unit_iters=True)
+    l29, l30, l31, l32, l33 = sch.split(loop=l21, factors=[None,  1, 2, 1, 1], preserve_unit_iters=True)
+    ################################################################################################
+
+    v34, v35, v36, v37, v38 = sch.sample_perfect_tile(loop=l22, n=5, max_innermost_factor=4, decision=[32, 8, 1, 1, 1])
+    l39, l40, l41, l42, l43 = sch.split(loop=l22, factors=[v34, v35, v36, v37, v38], preserve_unit_iters=True)
+    v44, v45, v46 = sch.sample_perfect_tile(loop=l23, n=3, max_innermost_factor=4, decision=[256, 1, 1])
+    l47, l48, l49 = sch.split(loop=l23, factors=[v44, v45, v46], preserve_unit_iters=True)
+    sch.reorder(l29, l39, l30, l40, l31, l41, l47, l48, l32, l42, l49, l33, l43)
+    l50 = sch.fuse(l29, l39, preserve_unit_iters=True)
+    sch.bind(loop=l50, thread_axis="blockIdx.y")
+    l51 = sch.fuse(l30, l40, preserve_unit_iters=True)
+    sch.bind(loop=l51, thread_axis="blockIdx.x")
+    l52 = sch.fuse(l31, l41, preserve_unit_iters=True)
+    sch.bind(loop=l52, thread_axis="threadIdx.y")
+    sch.annotate(block_or_loop=b20, ann_key="meta_schedule.thread_extent_low_inclusive", ann_val=32)
+    sch.annotate(block_or_loop=b20, ann_key="meta_schedule.thread_extent_high_inclusive", ann_val=1024)
+    b53 = sch.cache_write(block=b20, write_buffer_index=0, storage_scope="shared.dyn")
+    sch.reverse_compute_at(block=b53, loop=l51, preserve_unit_loops=True, index=-1)
+    b54 = sch.cache_write(block=b20, write_buffer_index=0, storage_scope="wmma.accumulator")
+    sch.reverse_compute_at(block=b54, loop=l52, preserve_unit_loops=True, index=-1)
+    l55, l56, l57, l58 = sch.get_loops(block=b53)
+    l59 = sch.fuse(l57, l58, preserve_unit_iters=True)
+    v60 = sch.sample_categorical(candidates=[1, 2, 3, 4, 8, 16], probs=[0.16666666666666666, 0.16666666666666666, 0.16666666666666666, 0.16666666666666666, 0.16666666666666666, 0.16666666666666666], decision=2)
+    sch.annotate(block_or_loop=b53, ann_key="meta_schedule.cooperative_fetch", ann_val=v60)
+    sch.reverse_compute_inline(block=b2)
+    l61, l62, l63, l64, l65 = sch.get_loops(block=b54)
+    l66, l67 = sch.split(loop=l65, factors=[None, 16], preserve_unit_iters=True)
+    l68, l69 = sch.split(loop=l64, factors=[None, 16], preserve_unit_iters=True)
+    l70, l71, l72, l73, l74, l75, l76 = sch.get_loops(block=b54)
+    sch.reorder(l75, l69, l67)
+    b77 = sch.blockize(target=l69, preserve_unit_iters=True)
+    sch.annotate(block_or_loop=b77, ann_key="meta_schedule.auto_tensorize", ann_val="wmma_store_16x16x16_s32_shared_dyn")
+    b78 = sch.cache_read(block=b20, read_buffer_index=0, storage_scope="shared.dyn", consumer_blocks=[b20])
+    sch.compute_at(block=b78, loop=l47, preserve_unit_loops=True, index=-1)
+    l79, l80, l81, l82, l83, l84 = sch.get_loops(block=b78)
+    l85 = sch.fuse(l83, l84, preserve_unit_iters=True)
+    v86 = sch.sample_categorical(candidates=[1, 2, 3, 4, 8, 16], probs=[0.16666666666666666, 0.16666666666666666, 0.16666666666666666, 0.16666666666666666, 0.16666666666666666, 0.16666666666666666], decision=4)
+    sch.annotate(block_or_loop=b78, ann_key="meta_schedule.cooperative_fetch", ann_val=v86)
+    b87 = sch.cache_read(block=b20, read_buffer_index=1, storage_scope="shared.dyn", consumer_blocks=[b20])
+    sch.compute_at(block=b87, loop=l47, preserve_unit_loops=True, index=-1)
+    l88, l89, l90, l91, l92, l93 = sch.get_loops(block=b87)
+    l94 = sch.fuse(l92, l93, preserve_unit_iters=True)
+    v95 = sch.sample_categorical(candidates=[1, 2, 3, 4, 8, 16], probs=[0.16666666666666666, 0.16666666666666666, 0.16666666666666666, 0.16666666666666666, 0.16666666666666666, 0.16666666666666666], decision=3)
+    sch.annotate(block_or_loop=b87, ann_key="meta_schedule.cooperative_fetch", ann_val=v95)
+    b96 = sch.cache_read(block=b20, read_buffer_index=0, storage_scope="wmma.matrix_a")
+    sch.compute_at(block=b96, loop=l48, preserve_unit_loops=True, index=-1)
+    l97, l98, l99, l100, l101, l102, l103 = sch.get_loops(block=b96)
+    l104, l105 = sch.split(loop=l103, factors=[None, 16], preserve_unit_iters=True)
+    l106, l107 = sch.split(loop=l102, factors=[None, 16], preserve_unit_iters=True)
+    l108, l109, l110, l111, l112, l113, l114, l115, l116 = sch.get_loops(block=b96)
+    sch.reorder(l115, l107, l105)
+    b117 = sch.blockize(target=l107, preserve_unit_iters=True)
+    sch.annotate(block_or_loop=b117, ann_key="meta_schedule.auto_tensorize", ann_val="wmma_load_16x16x16_s8_a_shared_dyn")
+    b118 = sch.cache_read(block=b20, read_buffer_index=1, storage_scope="wmma.matrix_b")
+    sch.compute_at(block=b118, loop=l48, preserve_unit_loops=True, index=-1)
+    l119, l120, l121, l122, l123, l124, l125 = sch.get_loops(block=b118)
+    l126, l127 = sch.split(loop=l125, factors=[None, 16], preserve_unit_iters=True)
+    l128, l129 = sch.split(loop=l124, factors=[None, 16], preserve_unit_iters=True)
+    l130, l131, l132, l133, l134, l135, l136, l137, l138 = sch.get_loops(block=b118)
+    sch.reorder(l137, l129, l127)
+    b139 = sch.blockize(target=l129, preserve_unit_iters=True)
+    sch.annotate(block_or_loop=b139, ann_key="meta_schedule.auto_tensorize", ann_val="wmma_load_16x16x16_s8_b_trans_shared_dyn")
+
+    ##################################################################################################
+    sch.compute_inline(sch.get_block("A_reindex_pad"))  # inline pad A, new one
+    ##################################################################################################
+
+    sch.compute_inline(block=b3)
+    sch.compute_inline(block=b4)
+
+
+    ##################################################################################################
+    sch.reverse_compute_inline(sch.get_block("NT_matmul_reindex_pad"))  # inline pad A, new one
+    ##################################################################################################
+
+    sch.storage_align(block=b78, buffer_index=0, axis=-2, factor=32, offset=16)
+    sch.storage_align(block=b87, buffer_index=0, axis=-2, factor=32, offset=16)
+    v140 = sch.sample_categorical(candidates=[0, 16, 64, 512, 1024], probs=[0.20000000000000001, 0.20000000000000001, 0.20000000000000001, 0.20000000000000001, 0.20000000000000001], decision=2)
+    sch.annotate(block_or_loop=b1, ann_key="meta_schedule.unroll_explicit", ann_val=v140)
+    sch.enter_postproc()
+    sch.unannotate(block_or_loop=b53, ann_key="meta_schedule.cooperative_fetch")
+    l141, l142, l143 = sch.get_loops(block=b53)
+    l144, l145, l146 = sch.split(loop=l143, factors=[None, 2, 32], preserve_unit_iters=True)
+    sch.bind(loop=l146, thread_axis="threadIdx.x")
+    sch.bind(loop=l145, thread_axis="threadIdx.y")
+    sch.unannotate(block_or_loop=b78, ann_key="meta_schedule.cooperative_fetch")
+    l147, l148, l149, l150, l151 = sch.get_loops(block=b78)
+    l152, l153, l154, l155 = sch.split(loop=l151, factors=[None, 2, 32, 8], preserve_unit_iters=True)
+    sch.vectorize(loop=l155)
+    sch.bind(loop=l154, thread_axis="threadIdx.x")
+    sch.bind(loop=l153, thread_axis="threadIdx.y")
+    sch.unannotate(block_or_loop=b87, ann_key="meta_schedule.cooperative_fetch")
+    l156, l157, l158, l159, l160 = sch.get_loops(block=b87)
+    l161, l162, l163, l164 = sch.split(loop=l160, factors=[None, 2, 32, 4], preserve_unit_iters=True)
+    sch.vectorize(loop=l164)
+    sch.bind(loop=l163, thread_axis="threadIdx.x")
+    sch.bind(loop=l162, thread_axis="threadIdx.y")
+    b165 = sch.get_block(name="root", func_name="main")
+    sch.unannotate(block_or_loop=b165, ann_key="meta_schedule.unroll_explicit")
+    b166, b167, b168, b169, b170, b171, b172 = sch.get_child_blocks(b165)
+    l173, l174, l175, l176, l177, l178, l179, l180 = sch.get_loops(block=b166)
+    l181, l182, l183, l184, l185, l186, l187, l188 = sch.get_loops(block=b167)
+    l189, l190, l191, l192, l193, l194, l195 = sch.get_loops(block=b168)
+    l196, l197, l198, l199, l200, l201, l202 = sch.get_loops(block=b169)
+    l203, l204, l205, l206, l207, l208, l209, l210, l211, l212 = sch.get_loops(block=b170)
+    sch.annotate(block_or_loop=l203, ann_key="pragma_auto_unroll_max_step", ann_val=64)
+    sch.annotate(block_or_loop=l203, ann_key="pragma_unroll_explicit", ann_val=1)
+    l213, l214, l215, l216, l217 = sch.get_loops(block=b171)
+    l218, l219, l220, l221, l222 = sch.get_loops(block=b172)
+    b223 = sch.get_block(name="NT_matmul_o", func_name="main")
+    l224, l225, l226, l227, l228, l229, l230, l231, l232, l233 = sch.get_loops(block=b223)
+    b234 = sch.decompose_reduction(block=b223, loop=l227)
+    sch.unannotate(block_or_loop=b234, ann_key="meta_schedule.auto_tensorize")
+    sch.annotate(block_or_loop=b234, ann_key="meta_schedule.auto_tensorize", ann_val="wmma_fill_16x16x16_s32")
+    sch.unannotate(block_or_loop=b223, ann_key="meta_schedule.auto_tensorize_init")
+    sch.unannotate(block_or_loop=b234, ann_key="meta_schedule.auto_tensorize_init")
+    b235 = sch.get_block(name="NT_matmul_o_init", func_name="main")
+    sch.unannotate(block_or_loop=b235, ann_key="meta_schedule.auto_tensorize")
+    sch.tensorize(block_or_loop=b235, tensor_intrin="wmma_fill_16x16x16_s32", preserve_unit_iters=True)
+
+    ##################################################################################################
+    #b236 = sch.get_block(name="A_reindex_shared.dyn_wmma.matrix_a_o", func_name="main")
+    b236 = sch.get_block(name="A_reindex_pad_shared.dyn_wmma.matrix_a_o", func_name="main")
+    ##################################################################################################
+
+    sch.unannotate(block_or_loop=b236, ann_key="meta_schedule.auto_tensorize")
+    sch.tensorize(block_or_loop=b236, tensor_intrin="wmma_load_16x16x16_s8_a_shared_dyn", preserve_unit_iters=True)
+    b237 = sch.get_block(name="B_reindex_shared.dyn_wmma.matrix_b_o", func_name="main")
+    sch.unannotate(block_or_loop=b237, ann_key="meta_schedule.auto_tensorize")
+    sch.tensorize(block_or_loop=b237, tensor_intrin="wmma_load_16x16x16_s8_b_trans_shared_dyn", preserve_unit_iters=True)
+    b238 = sch.get_block(name="NT_matmul_o_update", func_name="main")
+    sch.unannotate(block_or_loop=b238, ann_key="meta_schedule.auto_tensorize")
+    sch.tensorize(block_or_loop=b238, tensor_intrin="wmma_sync_16x16x16_s8s8s32_trans", preserve_unit_iters=True)
+
+    ##################################################################################################
+    #b239 = sch.get_block(name="NT_matmul_reindex_shared.dyn_wmma.accumulator_o", func_name="main")
+    b239 = sch.get_block(name="NT_matmul_reindex_pad_shared.dyn_wmma.accumulator_o", func_name="main")
+    ##################################################################################################
+
+    sch.unannotate(block_or_loop=b239, ann_key="meta_schedule.auto_tensorize")
+    sch.tensorize(block_or_loop=b239, tensor_intrin="wmma_store_16x16x16_s32_shared_dyn", preserve_unit_iters=True)
+
+
+@T.prim_func
+def NT_matmul_dyn(
+    var_A: T.handle,
+    B: T.Buffer((T.int64(12288), T.int64(4096)), "int8"),
+    var_NT_matmul: T.handle
+):
+    #T.func_attr({"op_pattern": 4, "tir.noalias": T.bool(True)})
+    T.func_attr({"tir.noalias": T.bool(True)})
+    n = T.int64()
+    A = T.match_buffer(var_A, (n, T.int64(4096)), "int8")
+    NT_matmul = T.match_buffer(var_NT_matmul, (n, T.int64(12288)), "int32")
+    # with T.block("root"):
+    for i0, i1, k in T.grid(n, T.int64(12288), T.int64(4096)):
+        with T.block("NT_matmul"):
+            v_i0, v_i1, v_k = T.axis.remap("SSR", [i0, i1, k])
+            T.reads(A[v_i0, v_k], B[v_i1, v_k])
+            T.writes(NT_matmul[v_i0, v_i1])
+            with T.init():
+                NT_matmul[v_i0, v_i1] = 0
+            NT_matmul[v_i0, v_i1] = NT_matmul[v_i0, v_i1] + T.Cast("int32", A[v_i0, v_k]) * T.Cast("int32", B[v_i1, v_k])
+
+
+def get_nt_matmul_int8_dynamic_sch_func():
+    sch = tvm.tir.Schedule(NT_matmul_dyn)
+    apply_trace_matmul_dyn(sch)
+    return sch.mod["main"].with_attr("tir.is_scheduled", 1)
+
+
+@T.prim_func
+def NT_matmul7_dyn(
+    var_A: T.handle,
+    B: T.Buffer((T.int64(22016), T.int64(4096)), "int8"),
+    var_NT_matmul: T.handle
+):
+    #T.func_attr({"op_pattern": 4, "tir.noalias": T.bool(True)})
+    T.func_attr({"tir.noalias": T.bool(True)})
+    n = T.int64()
+    A = T.match_buffer(var_A, (n, T.int64(4096)), "int8")
+    NT_matmul = T.match_buffer(var_NT_matmul, (n, T.int64(22016)), "int32")
+    # with T.block("root"):
+    for i0, i1, k in T.grid(n, T.int64(22016), T.int64(4096)):
+        with T.block("NT_matmul"):
+            v_i0, v_i1, v_k = T.axis.remap("SSR", [i0, i1, k])
+            T.reads(A[v_i0, v_k], B[v_i1, v_k])
+            T.writes(NT_matmul[v_i0, v_i1])
+            with T.init():
+                NT_matmul[v_i0, v_i1] = 0
+            NT_matmul[v_i0, v_i1] = NT_matmul[v_i0, v_i1] + T.Cast("int32", A[v_i0, v_k]) * T.Cast("int32", B[v_i1, v_k])
+
+
+def get_nt_matmul_int8_7_dynamic_sch_func():
+    sch = tvm.tir.Schedule(NT_matmul7_dyn)
+    apply_trace_matmul_dyn(sch)
+    return sch.mod["main"].with_attr("tir.is_scheduled", 1)
+
+
+@T.prim_func
+def NT_matmul5_dyn(
+    var_A: T.handle,
+    B: T.Buffer((T.int64(4096), T.int64(4096)), "int8"),
+    var_NT_matmul: T.handle
+):
+    #T.func_attr({"op_pattern": 4, "tir.noalias": T.bool(True)})
+    T.func_attr({"tir.noalias": T.bool(True)})
+    n = T.int64()
+    A = T.match_buffer(var_A, (n, T.int64(4096)), "int8")
+    NT_matmul = T.match_buffer(var_NT_matmul, (n, T.int64(4096)), "int32")
+    # with T.block("root"):
+    for i0, i1, k in T.grid(n, T.int64(4096), T.int64(4096)):
+        with T.block("NT_matmul"):
+            v_i0, v_i1, v_k = T.axis.remap("SSR", [i0, i1, k])
+            T.reads(A[v_i0, v_k], B[v_i1, v_k])
+            T.writes(NT_matmul[v_i0, v_i1])
+            with T.init():
+                NT_matmul[v_i0, v_i1] = 0
+            NT_matmul[v_i0, v_i1] = NT_matmul[v_i0, v_i1] + T.Cast("int32", A[v_i0, v_k]) * T.Cast("int32", B[v_i1, v_k])
+
+
+def get_nt_matmul_int8_5_dynamic_sch_func():
+    sch = tvm.tir.Schedule(NT_matmul5_dyn)
+    apply_trace_matmul_dyn(sch)
+    return sch.mod["main"].with_attr("tir.is_scheduled", 1)
+
+
+@T.prim_func
+def NT_matmul8_dyn(
+    var_A: T.handle,
+    B: T.Buffer((T.int64(4096), T.int64(11008)), "int8"),
+    var_NT_matmul: T.handle
+):
+    #T.func_attr({"op_pattern": 4, "tir.noalias": T.bool(True)})
+    T.func_attr({"tir.noalias": T.bool(True)})
+    n = T.int64()
+    A = T.match_buffer(var_A, (n, T.int64(11008)), "int8")
+    NT_matmul = T.match_buffer(var_NT_matmul, (n, T.int64(4096)), "int32")
+    # with T.block("root"):
+    for i0, i1, k in T.grid(n, T.int64(4096), T.int64(11008)):
+        with T.block("NT_matmul"):
+            v_i0, v_i1, v_k = T.axis.remap("SSR", [i0, i1, k])
+            T.reads(A[v_i0, v_k], B[v_i1, v_k])
+            T.writes(NT_matmul[v_i0, v_i1])
+            with T.init():
+                NT_matmul[v_i0, v_i1] = 0
+            NT_matmul[v_i0, v_i1] = NT_matmul[v_i0, v_i1] + T.Cast("int32", A[v_i0, v_k]) * T.Cast("int32", B[v_i1, v_k])
+
+
+def get_nt_matmul_int8_8_dynamic_sch_func():
+    sch = tvm.tir.Schedule(NT_matmul8_dyn)
+    apply_trace_matmul_dyn(sch)
+    return sch.mod["main"].with_attr("tir.is_scheduled", 1)
 ################################################
 
 def get_dict_key(func):
@@ -6702,9 +6992,17 @@ tir_dispatch_dict = {
 }
 # fmt: on
 
+tir_dispatch_llama_dyn_dict = {
+    get_dict_key(NT_matmul7_dyn): get_nt_matmul_int8_7_dynamic_sch_func(),
+    get_dict_key(NT_matmul5_dyn): get_nt_matmul_int8_5_dynamic_sch_func(),
+    get_dict_key(NT_matmul8_dyn): get_nt_matmul_int8_8_dynamic_sch_func(),
+    get_dict_key(NT_matmul_dyn): get_nt_matmul_int8_dynamic_sch_func(),
+}
+
 
 def lookup_func(func):
-    for (hash_value, func_before), f_after in tir_dispatch_dict.items():
+    #for (hash_value, func_before), f_after in tir_dispatch_dict.items():
+    for (hash_value, func_before), f_after in tir_dispatch_llama_dyn_dict.items():
         if tvm.ir.structural_hash(func) == hash_value and tvm.ir.structural_equal(
             func, func_before
         ):

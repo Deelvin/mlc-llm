@@ -21,6 +21,7 @@ from mlc_llm.relax_model import (
     param_manager,
     rwkv,
 )
+from mlc_llm.quantization.smoothquant_utils import smoothquant
 
 
 def _parse_args() -> argparse.Namespace:
@@ -299,6 +300,15 @@ def mod_transform_before_build(
         if args.sep_embed:
             model_names = ["embed", "prefill_with_embed"] + model_names[1:]
 
+    if args.quantization.name == "a8q8f16":
+        # Step 1: get model params.
+        tmod = param_manager.transform_module(mod)
+        mod_transform, _ = utils.split_transform_deploy_mod(tmod, model_names)
+        params = utils.transform_params(
+            mod_transform, "transform_params", param_manager, model_params
+        )
+        # Step 2: run smoothquant
+        mod = smoothquant(args, mod, params, model_names)
     mod = mlc_llm.transform.FuseDecodeTranspose()(mod)  # pylint: disable=not-callable
     mod = mlc_llm.transform.FuseTransposeMatmul()(mod)  # pylint: disable=not-callable
     mod = relax.pipeline.get_pipeline()(mod)  # pylint: disable=no-value-for-parameter
@@ -322,10 +332,13 @@ def mod_transform_before_build(
     debug_dump_script(mod_transform, "mod_lift_params.py", args)
     debug_dump_script(mod_deploy, "mod_deploy.py", args)
 
+    # Module can contain several "transform_param" functions.
     for gv in mod_transform.functions:
         func_name  = gv.name_hint
-        mod_single_func = tvm.IRModule({tvm.ir.GlobalVar(func_name): mod_transform[func_name]})
-        new_params = utils.transform_params(mod_single_func, param_manager, model_params)
+        if "transform_param" not in func_name:
+            continue
+        mod_single_func = utils.extract_transform_mod(mod_transform, func_name)
+        new_params = utils.transform_params(mod_single_func, func_name, param_manager, model_params)
         utils.save_params(new_params, os.path.join(args.artifact_path, "params", func_name))
         # Free memory before next iteration:
         new_params.clear()
@@ -385,6 +398,8 @@ def build(mod_deploy: tvm.IRModule, args: argparse.Namespace) -> None:
                     mod_deploy
                 )
             mod_deploy = relax.transform.MetaScheduleApplyDatabase()(mod_deploy)
+            if args.quantization.name == "a8q8f16":
+                mod_deploy = mlc_llm.dispatch.DispatchTIROperator(args.model_category)(mod_deploy)
             mod_deploy = dl.ApplyDefaultSchedule(dl.gpu.Matmul())(mod_deploy)
             mod_deploy = dl.ApplyDefaultSchedule(dl.gpu.DecodeGEMV())(mod_deploy)
             mod_deploy = dl.ApplyDefaultSchedule(dl.gpu.Reduction())(mod_deploy)
@@ -441,12 +456,12 @@ def main():
             mod, param_manager, params = rwkv.get_model(args, config)
         else:
             raise ValueError(f"Model {args.model} not supported")
+        if args.model_category != "minigpt":
+            utils.copy_tokenizer(args)
         mod = mod_transform_before_build(mod, param_manager, params, args)
         with open(cache_path, "wb") as outfile:
             pickle.dump(mod, outfile)
         print(f"Save a cached module to {cache_path}.")
-        if args.model_category != "minigpt":
-            utils.copy_tokenizer(args)
     else:
         print(
             f"Load cached module from {cache_path} and skip tracing. "

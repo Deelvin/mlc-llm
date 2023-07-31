@@ -263,51 +263,9 @@ class ParamManager:
         ] = f_default_compute_relax_param,
         no_lazy_param_loading: bool = False,
     ):
-        self.f_convert_pname_fwd = f_convert_pname_fwd
-        self.f_convert_param_bkwd = f_convert_param_bkwd
-        self.f_compute_relax_param = f_compute_relax_param
-
-        self.model_path = model_path
-        if not no_lazy_param_loading:
-            self.pidx2pname = {
-                pidx: pname for pidx, pname in enumerate(self.param_names)
-            }
-            self.torch_pname2binname = load_torch_pname2binname_map(
-                self.model_path,
-                set(self.pidx2pname.values()),
-                f_convert_pname_fwd=f_convert_pname_fwd,
-            )
-        else:
-            self.pidx2pname = dict()
-            self.torch_pname2binname = dict()
-
-    def transform_module(
-        self,
-        mod: tvm.IRModule,
-        model_path: str,
-        f_convert_pname_fwd: Callable[[str], List[str]] = lambda pname: [pname],
-        f_convert_param_bkwd: Callable[
-            [str, Any], Optional[List[Tuple[str, Any]]]
-        ] = lambda pname, torch_param: [(pname, torch_param)],
-        f_compute_relax_param: Callable[
-            [str, List[Any]], Any
-        ] = f_default_compute_relax_param,
-        *,
-        no_lazy_param_loading: bool = False,
-    ) -> tvm.IRModule:
-        """The entrance function of all quantization-related transformation,
-        including creating the function that computes quantization, and
-        updating the input IRModule with quantized data as function input and
-        dequantization computation.
-
+        """
         Parameters
         ----------
-        mod : tvm.IRModule
-            The input IRModule to be applied quantization/dequantization.
-            The IRModule contains all the constructed Relax functions
-            (e.g., the "prefill"/"decode" functions) and is expected to
-            have all of its parameters registered in the ParamManager.
-
         model_path : str
             The path of the Hugging Face model on disk.
 
@@ -329,6 +287,38 @@ class ParamManager:
             A boolean indicating that no lazy parameter loading from torch is needed.
             This needs to be set as True when all the model weights are loaded
             at the time of constructing the model.
+        """
+        self.f_convert_pname_fwd = f_convert_pname_fwd
+        self.f_convert_param_bkwd = f_convert_param_bkwd
+        self.f_compute_relax_param = f_compute_relax_param
+
+        self.model_path = model_path
+        if not no_lazy_param_loading:
+            self.pidx2pname = {
+                pidx: pname for pidx, pname in enumerate(self.param_names)
+            }
+            self.torch_pname2binname = load_torch_pname2binname_map(
+                self.model_path,
+                set(self.pidx2pname.values()),
+                f_convert_pname_fwd=f_convert_pname_fwd,
+            )
+        else:
+            self.pidx2pname = dict()
+            self.torch_pname2binname = dict()
+
+    def transform_module(self, mod: tvm.IRModule) -> tvm.IRModule:
+        """The entrance function of all quantization-related transformation,
+        including creating the function that computes quantization, and
+        updating the input IRModule with quantized data as function input and
+        dequantization computation.
+
+        Parameters
+        ----------
+        mod : tvm.IRModule
+            The input IRModule to be applied quantization/dequantization.
+            The IRModule contains all the constructed Relax functions
+            (e.g., the "prefill"/"decode" functions) and is expected to
+            have all of its parameters registered in the ParamManager.
 
         Returns
         -------
@@ -336,17 +326,8 @@ class ParamManager:
             The IRModule updated with the quantization function and the
             dequantization computation.
         """
-        ######################### Part 1. Fields setup #########################
 
-        self.setup_param_fields(
-            model_path,
-            f_convert_pname_fwd,
-            f_convert_param_bkwd,
-            f_compute_relax_param,
-            no_lazy_param_loading,
-        )
-
-        ################# Part 2. Create quantization function #################
+        ################# Part 1. Create quantization function #################
 
         # Create the quantization function.
         # We first create an initial one, then reorder it according to each
@@ -362,7 +343,7 @@ class ParamManager:
         mod_transform = relax.transform.ToNonDataflow()(mod_transform)
         mod_transform = relax.transform.LazyTransformParams()(mod_transform)
 
-        ############# Part 3. Update the model with dequantization #############
+        ############# Part 2. Update the model with dequantization #############
 
         # For each Relax function in the input IRModule (e.g., "prefill"),
         # we create its input relax.Var of all the quantized data, and
