@@ -167,7 +167,7 @@ def scaled_multihead_dot_product_attention(
   if key_padding_mask is not None:
     if attn_bias is not None:
       warnings.warn('Propogating key_padding_mask to the attention module ' + 'and applying it within the attention module can cause ' + 'unneccessary computation/memory usage. Consider integrating ' + 'into attn_bias once and passing that to each attention ' + 'module instead.')
-    key_mask = nn.emit(relax.op.bitwise_not(relax.op.reshape(key_padding_mask, (b, 1, 1, s_k))))
+    key_mask = nn.emit(relax.op.logical_not(relax.op.reshape(key_padding_mask, (b, 1, 1, s_k))))
     attn_weight = nn.emit(relax.op.masked_fill(attn_weight, key_mask, min_val))
   if is_causal and (not q.struct_info.shape[2] == 1):
     # It is the case where is no kv cache, thus s_q == s_k
@@ -176,7 +176,7 @@ def scaled_multihead_dot_product_attention(
     causal_mask = nn.emit(relax.op.ones((s, s,), dtype="float16"))
     causal_mask = nn.emit(relax.op.tril(causal_mask))
     causal_mask = nn.emit(relax.op.astype(causal_mask, "bool"))
-    causal_mask = nn.emit(relax.op.bitwise_not(causal_mask))
+    causal_mask = nn.emit(relax.op.logical_not(causal_mask))
     # Due to the case the slicing below can be skipped
     # slicing causal_mask[-s_q:, -s_k:]
     # s_q_end, s_k_end = causal_mask.struct_info.shape
@@ -327,7 +327,7 @@ def flash_attn_fn(
 #     (b_size, s_k) = key_padding_mask.struct_info.shape[:2]
 #     if attn_bias is None:
 #       attn_bias = nn.emit(relax.op.zeros((b_size, 1, 1, s_k), dtype=query.struct_info.dtype))
-#     key_mask = nn.emit(relax.op.bitwise_not(relax.op.reshape(key_padding_mask, (b_size, 1, 1, s_k))))
+#     key_mask = nn.emit(relax.op.logical_not(relax.op.reshape(key_padding_mask, (b_size, 1, 1, s_k))))
 #     attn_bias = nn.emit(relax.op.masked_fill(attn_bias, key_mask, get_type_min_val(query)))
 
 #   batch_size, seq_len, _ = query.struct_info.shape
@@ -646,7 +646,7 @@ class MPTModel(nn.Module):
         # Need to use _s_k instead of s_k_end - s_k (attn_bias.shape = [1, 32, 1, seq_len])
         attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [3], [s_k_end - s_k], [s_k_end]))
       min_val = get_type_min_val(attn_bias)
-      attn_mask = nn.emit(relax.op.bitwise_not(relax.op.reshape(attention_mask, (-1, 1, 1, s_k))))
+      attn_mask = nn.emit(relax.op.logical_not(relax.op.reshape(attention_mask, (-1, 1, 1, s_k))))
       attn_bias = nn.emit(relax.op.masked_fill(attn_bias, attn_mask, min_val))
     return (attn_bias, None)
 
@@ -673,7 +673,7 @@ class MPTModel(nn.Module):
     #     raise ValueError(f'Cannot forward input with past sequence length {past_position} and current sequence length {S + 1}, this model only supports total sequence length <= {self.max_seq_len}.')
     #   pos = nn.emit(relax.op.expand_dims(relax.op.arange(past_position, S + past_position, dtype="long"), axis=0))
     #   if attention_mask is not None:
-    #     pos_diff_to_slice = nn.emit(relax.op.cumsum(relax.op.astype(relax.op.bitwise_not(attention_mask), "int32"), axis=1))
+    #     pos_diff_to_slice = nn.emit(relax.op.cumsum(relax.op.astype(relax.op.logical_not(attention_mask), "int32"), axis=1))
     #     dim1_len = pos_diff_to_slice.struct_info.shape[1]
     #     # slicing [:, past_position:]
     #     pos_diff = nn.emit(relax.op.strided_slice(pos_diff_to_slice, [1], [past_position], [dim1_len]))
