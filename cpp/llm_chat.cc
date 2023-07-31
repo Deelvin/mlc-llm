@@ -622,7 +622,7 @@ class LLMChat {
     }
   }
 
-  void PrintNDArray(NDArray array, int64_t num = -1, std::string tensor_tag = "Tensor") {
+  void PrintNDArray(NDArray array, int64_t num = -1, std::string tensor_tag = "Tensor", bool to_save = false) {
     NDArray array_cpu = getArrayToPrint(array);
 
     size_t ndim = array_cpu->ndim;
@@ -656,11 +656,13 @@ class LLMChat {
     // LOG(INFO) << tensor_tag << "[:" << num_tag << "] = [" << os.str() << "]";
 
     // Save to binary file
-    std::string file_name = "tensor_" + std::to_string(debug_index_++) + ".bin";
-    std::cout << tensor_tag << " is saved in " << file_name << std::endl;
-    std::ofstream fs(file_name, std::ios::out | std::ios::binary | std::ios::app);
-    fs.write(reinterpret_cast<const char*>(p_data), 4 * numel);
-    fs.close();
+    if (to_save) {
+      std::string file_name = "tensor_" + std::to_string(debug_index_++) + ".bin";
+      std::cout << tensor_tag << " is saved in " << file_name << std::endl;
+      std::ofstream fs(file_name, std::ios::out | std::ios::binary | std::ios::app);
+      fs.write(reinterpret_cast<const char*>(p_data), 4 * numel);
+      fs.close();
+    }
   }
 
  private:
