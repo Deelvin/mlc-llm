@@ -542,7 +542,6 @@ def gen_slopes(n_heads, alibi_bias_max=8):
              relax.op.strided_slice(slopes, [0], [relax.const(0, dtype="int64")], [slopes_len], [relax.const(2)])] # [::2]
           ), [0], [relax.const(0, dtype="int64")], [relax.const(n_heads, dtype="int64")]) # slicing [:n_heads]
       )
-      print("SLOPES INFO:", slopes.struct_info)
     return nn.emit(relax.op.reshape(slopes, (1, n_heads, 1, 1)))
 
 
@@ -643,7 +642,8 @@ class MPTModel(nn.Module):
         # _s_k = relax.op.maximum(relax.const(0), s_k_end - s_k)
         # slicing attn_bias[:, :, :, _s_k:]
         # Need to use _s_k instead of s_k_end - s_k (attn_bias.shape = [1, 32, 1, seq_len])
-        attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [3], [s_k_end - s_k], [s_k_end]))
+        # attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [3], [s_k_end - s_k], [s_k_end]))
+        attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [3], [tvm.tir.const(0, dtype="int64")], [s_k]))
         print("ATTN BIAS INFO:", attn_bias.struct_info)
       min_val = get_type_min_val(attn_bias)
       attn_mask = nn.emit(relax.op.logical_not(relax.op.reshape(attention_mask, (-1, 1, 1, s_k))))
