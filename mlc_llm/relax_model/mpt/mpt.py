@@ -637,13 +637,20 @@ class MPTModel(nn.Module):
       if attn_bias is None:
         attn_bias = nn.emit(relax.op.zeros((1, 1, 1, s_k), dtype=dtype))
       else:
+        def attn_bias_te_slicing(x: te.Tensor, seq_len: tvm.tir.Var):
+          return te.compute(
+              shape=(x.shape[0], x.shape[1], x.shape[2], seq_len),
+              fcompute=lambda i, j, k, m: x[i, j, k, x.shape[3] - seq_len + m],
+              name="attn_bias_slice",
+          )
+
         s_k_end = attn_bias.struct_info.shape[3]  # config.max_seq_len = 2048
         # TODO(vchernov): it can not be calculated in relax
         # _s_k = relax.op.maximum(relax.const(0), s_k_end - s_k)
         # slicing attn_bias[:, :, :, _s_k:]
         # Need to use _s_k instead of s_k_end - s_k (attn_bias.shape = [1, 32, 1, seq_len])
         # attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [3], [s_k_end - s_k], [s_k_end]))
-        attn_bias = nn.emit(relax.op.strided_slice(attn_bias, [3], [tvm.tir.const(0, dtype="int64")], [s_k]))
+        attn_bias = nn.emit_te(attn_bias_te_slicing, attn_bias, s_k, primfunc_name_hint="attn_bias_slice")
         print("ATTN BIAS INFO:", attn_bias.struct_info)
       min_val = get_type_min_val(attn_bias)
       attn_mask = nn.emit(relax.op.logical_not(relax.op.reshape(attention_mask, (-1, 1, 1, s_k))))
