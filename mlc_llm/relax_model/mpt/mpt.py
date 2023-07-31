@@ -725,9 +725,9 @@ class MPTForCausalLM(nn.Module):
     if src_len is not None:
       seq_len = src_len.struct_info.values[0]
       shape = R.shape([1, seq_len])
-      return nn.emit(relax.op.ones(shape))
+      return nn.emit(relax.op.ones(shape, dtype="bool"))
     else:
-      return nn.emit(relax.op.ones_like(input_ids))
+      return nn.emit(relax.op.astype(relax.op.ones_like(input_ids), dtype="bool"))
 
   def forward(
       self,
@@ -736,7 +736,6 @@ class MPTForCausalLM(nn.Module):
       past_key_values: Optional[relax.Expr]=None,
   ):
     attention_mask = self.prepare_attention_mask_for_generation(input_ids, all_seq_len_shape)
-    attention_mask = nn.emit(relax.op.astype(attention_mask, dtype="bool"))
 
     logits, key_value_cache = self.transformer(
       input_ids=input_ids,
