@@ -538,9 +538,9 @@ def gen_slopes(n_heads, alibi_bias_max=8):
       slopes_len = slopes.struct_info.shape[0]
       slopes = nn.emit(relax.op.strided_slice(
           relax.op.concat(
-            [relax.op.strided_slice(slopes, [0], [relax.const(1)], [slopes_len], [relax.const(2)]), # [1::2]
-             relax.op.strided_slice(slopes, [0], [relax.const(0)], [slopes_len], [relax.const(2)])] # [::2]
-          ), [0], [relax.const(0)], [relax.const(n_heads)]) # slicing [:n_heads]
+            [relax.op.strided_slice(slopes, [0], [relax.const(1, dtype="int64")], [slopes_len], [relax.const(2)]), # [1::2]
+             relax.op.strided_slice(slopes, [0], [relax.const(0, dtype="int64")], [slopes_len], [relax.const(2)])] # [::2]
+          ), [0], [relax.const(0, dtype="int64")], [relax.const(n_heads, dtype="int64")]) # slicing [:n_heads]
       )
     return nn.emit(relax.op.reshape(slopes, (1, n_heads, 1, 1)))
 
