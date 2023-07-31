@@ -226,6 +226,26 @@ class LLMChat {
 
   std::string GetConfigJSON() const { return SerializeConfigToJSONValue().serialize(true); }
 
+  Array<NDArray> LoadParams(String params_path) {
+    const PackedFunc* fload_cache = tvm::runtime::Registry::Get("vm.builtin.ndarray_cache.load");
+    ICHECK(fload_cache) << "TVM runtime cannot find vm.builtin.ndarray_cache.load";
+    (*fload_cache)(params_path, static_cast<int32_t>(device_.device_type), device_.device_id);
+
+    const PackedFunc* fload_params =
+        tvm::runtime::Registry::Get("vm.builtin.param_array_from_cache");
+    ICHECK(fload_params) << "Cannot find env function vm.builtin.param_array_from_cache";
+    Array<NDArray> loaded_params = (*fload_params)("param", -1);
+
+    // after we get params, it is safe to simply clear the cached version
+    // as these params are referenced by params_
+    const PackedFunc* fclear_ndarray_cache =
+        tvm::runtime::Registry::Get("vm.builtin.ndarray_cache.clear");
+    ICHECK(fclear_ndarray_cache) << "Cannot find env function vm.builtin.ndarray_cache.clear";
+    (*fclear_ndarray_cache)();
+
+    return loaded_params;
+  }
+
   /*!
    * \brief Reload model, tokenizers and configurations from the specified model path.
    * \param executable The module to reload.
@@ -268,22 +288,8 @@ class LLMChat {
     fsample_topp_from_logits_ = *fsample_topp_from_logits_ptr;
 
     // Step 3. Load params in nd-array cache.
-    String params_path = model_path + "/transform_params";
-    const PackedFunc* fload_cache = tvm::runtime::Registry::Get("vm.builtin.ndarray_cache.load");
-    ICHECK(fload_cache) << "TVM runtime cannot find vm.builtin.ndarray_cache.load";
-    (*fload_cache)(params_path, static_cast<int32_t>(device_.device_type), device_.device_id);
-
-    const PackedFunc* fload_params =
-        tvm::runtime::Registry::Get("vm.builtin.param_array_from_cache");
-    ICHECK(fload_params) << "Cannot find env function vm.builtin.param_array_from_cache";
-    params_ = (*fload_params)("param", -1);
-
-    // after we get params, it is safe to simply clear the cached version
-    // as these params are referenced by params_
-    const PackedFunc* fclear_ndarray_cache =
-        tvm::runtime::Registry::Get("vm.builtin.ndarray_cache.clear");
-    ICHECK(fclear_ndarray_cache) << "Cannot find env function vm.builtin.ndarray_cache.clear";
-    (*fclear_ndarray_cache)();
+    encoder_params_ = LoadParams(model_path + "/prefill_transform_params");
+    decoder_params_ = LoadParams(model_path + "/decode_transform_params");
 
     const PackedFunc* fkvcache_array_popn =
         tvm::runtime::Registry::Get("vm.builtin.attention_kv_cache_array_popn");
@@ -532,7 +538,7 @@ class LLMChat {
     auto tstart = std::chrono::high_resolution_clock::now();
 
     NDArray input_data = this->GetInputTokenNDArray(prompt_tokens);
-    NDArray embedding = embed_func_(input_data, params_);
+    NDArray embedding = embed_func_(input_data, encoder_params_);
 
     auto tend = std::chrono::high_resolution_clock::now();
 
@@ -788,13 +794,13 @@ class LLMChat {
     Array<ObjectRef> ret;
     if (input_tokens.size() > 1 && prefill_func_.defined()) {
       NDArray input_data = this->GetInputTokenNDArray(input_tokens);
-      ret = prefill_func_(input_data, ShapeTuple({cur_pos}), kv_cache_, params_);
+      ret = prefill_func_(input_data, ShapeTuple({cur_pos}), kv_cache_, encoder_params_);
     } else {
       // running decode function when prefill is not available
       for (int i = 0; i < input_tokens.size(); ++i) {
         NDArray input_data = this->GetInputTokenNDArray({input_tokens[i]});
         int64_t pos = cur_pos + i + 1 - input_tokens.size();
-        ret = decode_func_(input_data, ShapeTuple({pos}), kv_cache_, params_);
+        ret = decode_func_(input_data, ShapeTuple({pos}), kv_cache_, decoder_params_);
       }
     }
     return Downcast<NDArray>(ret[0]);
@@ -804,7 +810,7 @@ class LLMChat {
   NDArray ForwardEmbeddings(NDArray embeddings, int64_t cur_pos) {
     Array<ObjectRef> ret;
     CHECK(prefill_with_embed_func_.defined());
-    ret = prefill_with_embed_func_(embeddings, ShapeTuple({cur_pos}), kv_cache_, params_);
+    ret = prefill_with_embed_func_(embeddings, ShapeTuple({cur_pos}), kv_cache_, encoder_params_);
     return Downcast<NDArray>(ret[0]);
   }
 
@@ -966,7 +972,11 @@ class LLMChat {
   // input token id
   NDArray input_token_ids_{nullptr};
   // local params
-  Array<NDArray> params_;
+  //Array<NDArray> params_;
+  // local encoder params
+  Array<NDArray> encoder_params_;
+  // local decoder params
+  Array<NDArray> decoder_params_;
   // KV cache
   Array<ObjectRef> kv_cache_;
   // Temp logits on cpu
@@ -1156,7 +1166,7 @@ class LLMChatModule : public ModuleNode {
     const PackedFunc* fload_params =
         tvm::runtime::Registry::Get("vm.builtin.param_array_from_cache");
     ICHECK(fload_params) << "Cannot find env function vm.builtin.param_array_from_cache";
-    chat_->params_ = (*fload_params)("param", -1);
+    chat_->encoder_params_ = (*fload_params)("param", -1);
 
     // KV cache creation
     chat_->kv_cache_ = chat_->vm_->GetFunction("create_kv_cache")();

@@ -156,7 +156,15 @@ struct ModelPaths {
   /*!
    * \brief Path to ndarray-cache.json
    */
-  std::filesystem::path params;
+  //std::filesystem::path params;
+  /*!
+   * \brief Path to encoder ndarray-cache.json
+   */
+  std::filesystem::path encoder_params;
+  /*!
+   * \brief Path to decoder ndarray-cache.json
+   */
+  std::filesystem::path decoder_params;
   /*!
    * \brief Path to ${model}-${device}.{so|dylib}
    *
@@ -348,15 +356,30 @@ ModelPaths ModelPaths::Find(const std::filesystem::path& artifact_path,
   }
   std::cout << "Use MLC config: " << config_path << std::endl;
   // Step 2. Find parameters
-  std::filesystem::path params_json;
+  std::filesystem::path encoder_params_json;
+  std::filesystem::path decoder_params_json;
   if (auto path = FindFile({config_path.parent_path(), config_path.parent_path() / "transform_params"}, {"ndarray-cache"}, {".json"})) {
-    params_json = path.value();
+    encoder_params_json = path.value();
+    decoder_params_json = path.value();
   } else {
-    std::cerr << "Cannot find \"ndarray-cache.json\" for params: " << config_path.parent_path()
-              << std::endl;
-    exit(1);
+    if (auto path = FindFile({config_path.parent_path(), config_path.parent_path() / "prefill_transform_params"}, {"ndarray-cache"}, {".json"})) {
+      encoder_params_json = path.value();
+    } else {
+      std::cerr << "Cannot find \"ndarray-cache.json\" for encoder params: " << config_path.parent_path()
+                << std::endl;
+      exit(1);
+    }
+
+    if (auto path = FindFile({config_path.parent_path(), config_path.parent_path() / "decode_transform_params"}, {"ndarray-cache"}, {".json"})) {
+      decoder_params_json = path.value();
+    } else {
+      std::cerr << "Cannot find \"ndarray-cache.json\" for decoder params: " << config_path.parent_path()
+                << std::endl;
+      exit(1);
+    }
   }
-  std::cout << "Use model weights: " << params_json << std::endl;
+  std::cout << "Use model weights(encoder): " << encoder_params_json << std::endl;
+  std::cout << "Use model weights(decoder): " << decoder_params_json << std::endl;
   // Step 3. Find model lib path
   std::string lib_local_id = ReadStringFromJSONFile(config_path, "model_lib");
   std::string lib_name = lib_local_id + "-" + device_name;
@@ -379,7 +402,7 @@ ModelPaths ModelPaths::Find(const std::filesystem::path& artifact_path,
     exit(1);
   }
   std::cout << "Use model library: " << lib_path << std::endl;
-  return ModelPaths{config_path, params_json, lib_path};
+  return ModelPaths{config_path, encoder_params_json, decoder_params_json, lib_path};
 }
 
 /*!
