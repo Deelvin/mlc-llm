@@ -20,6 +20,7 @@ from mlc_llm.relax_model import (
     rwkv,
     chatglm,
 )
+from mlc_llm.quantization.smoothquant_utils import smoothquant, smoothquant_transform_params
 
 from tvm import dlight as dl
 from tvm import relax
@@ -352,7 +353,11 @@ def mod_transform_before_build(
         if args.model.lower().startswith("rwkv-"):
             model_names += ["reset_kv_cache"]
 
-    mod = param_manager.transform_dequantize(mod)
+    if args.quantization.name == "smq_a8q8f16":
+        mod = smoothquant(args, mod, model_names)
+        utils.debug_dump_script(mod, "mod_smoothquant.py", args)
+    else:
+        mod = param_manager.transform_dequantize(mod)
 
     use_ft_quant = args.quantization.name in ["q4f16_ft", "q8f16_ft"]
     mod = mlc_llm.transform.FuseDecodeTranspose(skip_gemm=not use_ft_quant)(
@@ -426,7 +431,13 @@ def mod_transform_before_build(
     mod = mlc_llm.transform.FuseDecodeTake()(mod)
     mod = relax.transform.DeadCodeElimination(model_names)(mod)
     mod = mlc_llm.transform.CleanUpTIRAttrs()(mod)
-    mod_deploy = mod
+    if args.quantization.name == "smq_a8q8f16":
+        mod = relax.transform.LiftTransformParams()(mod)
+        mod_transform, mod_deploy = utils.split_transform_deploy_mod(mod, model_names)
+        new_params = smoothquant_transform_params(args, mod_transform)
+        utils.save_params(new_params, args.artifact_path)
+    else:
+        mod_deploy = mod
 
     utils.debug_dump_script(mod_deploy, "mod_deploy.py", args)
 
