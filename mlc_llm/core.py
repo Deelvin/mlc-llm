@@ -20,7 +20,7 @@ from mlc_llm.relax_model import (
     rwkv,
     chatglm,
 )
-from mlc_llm.quantization.smoothquant_utils import smoothquant, smoothquant_transform_params
+from mlc_llm.quantization.smoothquant_utils import smoothquant, smoothquant_quantize_params
 
 from tvm import dlight as dl
 from tvm import relax
@@ -432,9 +432,7 @@ def mod_transform_before_build(
     mod = relax.transform.DeadCodeElimination(model_names)(mod)
     mod = mlc_llm.transform.CleanUpTIRAttrs()(mod)
     if args.quantization.name == "smq_a8q8f16":
-        mod = relax.transform.LiftTransformParams()(mod)
-        mod_transform, mod_deploy = utils.split_transform_deploy_mod(mod, model_names)
-        new_params = smoothquant_transform_params(args, mod_transform)
+        mod_deploy, new_params = smoothquant_quantize_params(mod, model_names, args)
         utils.save_params(new_params, args.artifact_path)
     else:
         mod_deploy = mod
