@@ -402,6 +402,13 @@ class BuildArgs:
             "action": "store_true",
         },
     )
+    dataset: str = field(
+        default="dummy",
+        metadata={
+            "help": "Name of dataset for calibration.",
+            "choices": dataset_list,
+        },
+    )
 
     @property
     def convert_weight_only(self):
