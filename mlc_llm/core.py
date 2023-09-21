@@ -20,7 +20,9 @@ from mlc_llm.relax_model import (
     rwkv,
     chatglm,
 )
-from mlc_llm.quantization.smoothquant_utils import smoothquant, smoothquant_quantize_params
+from mlc_llm.quantization.smoothquant_utils import (
+    smoothquant, smoothquant_quantize_params, dataset_list,
+)
 
 from tvm import dlight as dl
 from tvm import relax
@@ -212,6 +214,13 @@ class BuildArgs:
                 "projection between two attention layers are put into a graph."
             ),
             "action": "store_true",
+        },
+    )
+    dataset: str = field(
+        default="dummy",
+        metadata={
+            "help": "Name of dataset for calibration.",
+            "choices": dataset_list,
         },
     )
 
