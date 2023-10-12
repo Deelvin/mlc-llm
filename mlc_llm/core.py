@@ -21,7 +21,7 @@ from mlc_llm.relax_model import (
     chatglm,
 )
 from mlc_llm.quantization.smoothquant_utils import (
-    smoothquant, smoothquant_quantize_params, dataset_list,
+    smoothquant, smoothquant_quantize_params, smoothquant_prepare_dir, dataset_list,
 )
 
 from tvm import dlight as dl
@@ -442,6 +442,7 @@ def mod_transform_before_build(
     mod = mlc_llm.transform.CleanUpTIRAttrs()(mod)
     if args.quantization.name.startswith("smq_q8i8f16"):
         mod_deploy, new_params = smoothquant_quantize_params(mod, model_names, args)
+        smoothquant_prepare_dir(os.path.join(args.artifact_path, "params"))
         utils.save_params(new_params, args.artifact_path)
     else:
         mod_deploy = mod
