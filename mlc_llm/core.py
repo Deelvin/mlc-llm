@@ -183,18 +183,14 @@ class BuildArgs:
     no_cutlass_attn: bool = field(
         default=False,
         metadata={
-            "help": (
-                "Disable offloading attention operations to CUTLASS."
-            ),
+            "help": ("Disable offloading attention operations to CUTLASS."),
             "action": "store_true",
         },
     )
     no_cutlass_norm: bool = field(
         default=False,
         metadata={
-            "help": (
-                "Disable offloading layer and RMS norm operations to CUTLASS."
-            ),
+            "help": ("Disable offloading layer and RMS norm operations to CUTLASS."),
             "action": "store_true",
         },
     )
@@ -231,9 +227,7 @@ class BuildArgs:
     use_flash_attn_mqa: bool = field(
         default=False,
         metadata={
-            "help": (
-                "Offload multi-query attention workload to Flash Attention."
-            ),
+            "help": ("Offload multi-query attention workload to Flash Attention."),
         },
     )
     batched: bool = field(
@@ -470,7 +464,7 @@ def mod_transform_before_build(
                     ),
                     annotate_workspace,
                     relax.transform.AllocateWorkspace(),
-                    relax.transform.RunCodegen(options, entry_functions=model_names)
+                    relax.transform.RunCodegen(options, entry_functions=model_names),
                 ]
             )(mod)
 
@@ -581,7 +575,7 @@ def build(mod_deploy: tvm.IRModule, args: argparse.Namespace) -> None:
     print(f"Finish exporting to {args.lib_path}")
 
 
-def build_model_from_args(args: argparse.Namespace):
+def prepare_mod(args: argparse.Namespace):
     if args.quantization == "q4f16_0":
         print(
             "WARNING: q4f16_1 is preferred to q4f16_0, "
@@ -668,6 +662,20 @@ def build_model_from_args(args: argparse.Namespace):
         )
         with open(cache_path, "rb") as pkl:
             mod = pickle.load(pkl)
+    return mod
+
+
+def extract_matmul_tasks_from_model(args: argparse.Namespace):
+    mod = prepare_mod(args)
+    from tvm.meta_schedule import relax_integration
+
+    tasks = relax_integration.extract_tasks(mod, args.target)
+    tasks = list(filter(lambda x: ("matmul" in x.task_name), tasks))
+    return tasks
+
+
+def build_model_from_args(args: argparse.Namespace):
+    mod = prepare_mod(args)
     if not args.reuse_lib:
         build(mod, args)
     else:
