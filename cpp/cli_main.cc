@@ -207,6 +207,7 @@ class ChatModule {
     this->chat_mod_ = mlc::llm::CreateChatModule(device);
     this->prefill_ = this->chat_mod_->GetFunction("prefill");
     this->decode_ = this->chat_mod_->GetFunction("decode");
+    this->logprobe_ = this->chat_mod_->GetFunction("loglikelihood");
     this->stopped_ = this->chat_mod_->GetFunction("stopped");
     this->get_message_ = this->chat_mod_->GetFunction("get_message");
     this->reload_ = this->chat_mod_->GetFunction("reload");
@@ -220,6 +221,7 @@ class ChatModule {
     this->executable_ = tvm::runtime::Module(nullptr);
     ICHECK(prefill_ != nullptr);
     ICHECK(decode_ != nullptr);
+    ICHECK(logprobe_ != nullptr);
     ICHECK(stopped_ != nullptr);
     ICHECK(get_message_ != nullptr);
     ICHECK(reload_ != nullptr);
@@ -280,6 +282,8 @@ class ChatModule {
    */
   void Decode() { decode_(); }
 
+  void LogProbe(const std::string& context, const std::string& continuation) { logprobe_(context, continuation); }
+
   /*! \return Whether the current round stopped. */
   bool Stopped() { return stopped_(); }
 
@@ -295,6 +299,7 @@ class ChatModule {
   tvm::runtime::Module chat_mod_;
   tvm::runtime::PackedFunc prefill_;
   tvm::runtime::PackedFunc decode_;
+  tvm::runtime::PackedFunc logprobe_;
   tvm::runtime::PackedFunc stopped_;
   tvm::runtime::PackedFunc get_message_;
   tvm::runtime::PackedFunc reload_;
@@ -414,20 +419,31 @@ ModelPaths ModelPaths::Find(const std::string& device_name, const std::string& l
  */
 void Converse(ChatModule* chat, const std::string& input, int stream_interval,
               std::ostream& os) {  // NOLINT(*)
-  chat->Prefill(input);
+  // chat->Prefill(input);
 
-  std::string cur_msg = "";
-  os << chat->GetRole1() << ": " << std::flush;
-  for (size_t i = 0; !chat->Stopped(); ++i) {
-    chat->Decode();
-    if (i % stream_interval == 0 || chat->Stopped()) {
-      std::string new_msg = chat->GetMessage();
-      std::string print = mlc::llm::GetDeltaMessage(cur_msg, new_msg);
-      os << print << std::flush;
-      cur_msg = std::move(new_msg);
-    }
-  }
-  os << std::endl << std::flush;
+  // std::string cur_msg = "";
+  // os << chat->GetRole1() << ": " << std::flush;
+  // for (size_t i = 0; !chat->Stopped(); ++i) {
+  //   chat->Decode();
+  //   if (i % stream_interval == 0 || chat->Stopped()) {
+  //     std::string new_msg = chat->GetMessage();
+  //     std::string print = mlc::llm::GetDeltaMessage(cur_msg, new_msg);
+  //     os << print << std::flush;
+  //     cur_msg = std::move(new_msg);
+  //   }
+  // }
+  // os << std::endl << std::flush;
+
+  std::cout << "INPUT: " << input << std::endl;
+
+  const std::string delimiter = "XXXX";
+  size_t pos = input.find(delimiter);
+  std::string context = input.substr(0, pos);
+  std::string continuation = input.substr(pos + delimiter.length(), std::string::npos);
+  std::cout << "CONTEXT: " << context << std::endl;
+  std::cout << "CONTINUATION: " << continuation << std::endl;
+
+  chat->LogProbe(context, continuation);
 }
 
 /*!

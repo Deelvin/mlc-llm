@@ -1186,6 +1186,8 @@ class LLMChat {
     picojson::object config;
     config["logprobes"] = picojson::value(sum);
     config["is_greedy"] = picojson::value(is_greedy);
+    std::cout << "LOGPROBES: " << sum << std::endl;
+    std::cout << "IS_GREEDY: " << is_greedy << std::endl;
     return picojson::value(config).serialize(true);
   }
 
