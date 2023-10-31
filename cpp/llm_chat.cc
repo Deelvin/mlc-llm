@@ -897,8 +897,14 @@ class LLMChat {
     }
 
     std::string inp = context + continuation;
+    std::cout << "FULL PROMPT BEFORE ENCODING: \"" << inp << "\"" << std::endl;
     std::vector<int32_t> prompt_tokens = this->tokenizer_->Encode(inp);
     int64_t token_len = static_cast<int64_t>(prompt_tokens.size());
+    std::cout << "ENCODED FULL PROMPT (SIZE = " << token_len << "): [";
+      for (int64_t i = 0; i < token_len; ++i) {
+        std::cout << " " << prompt_tokens[i];
+      }
+    std::cout << " ]" << std::endl;
     if (token_len == 0) {
       picojson::object config;
       config["logprobes"] = picojson::value(std::numeric_limits<float>::min());
@@ -910,6 +916,7 @@ class LLMChat {
       this->ft_.sess->SyncWorker(0);
     }
 
+    std::cout << "CONTINUATION BEFORE ENCODING: \"" << continuation << "\"" << std::endl;
     std::vector<int32_t> continuation_tokens = this->tokenizer_->Encode(continuation);
     // TODO(vvchernov): strange token is added in front of continuation after encoding,
     // There is advanced fix for any cases, but need study reason and fix it
@@ -923,6 +930,11 @@ class LLMChat {
     for (int64_t j = 0; j < cont_token_length + 1 - i; ++j) {
       continuation_tokens.erase(continuation_tokens.begin());
     }
+    std::cout << "ENCODED CONTINUATION WITH ERASE (SIZE = " << continuation_tokens.size() << "): [";
+      for (int64_t i = 0; i < continuation_tokens.size(); ++i) {
+        std::cout << " " << continuation_tokens[i];
+      }
+    std::cout << " ]" << std::endl;
 
     std::vector<int32_t> cut_tokens = prompt_tokens;
     cut_tokens.pop_back();
@@ -1161,13 +1173,21 @@ class LLMChat {
     size_t seq_length = logprobs->shape[logprobs->ndim - 2];
     size_t vocab_length = logprobs->shape[logprobs->ndim - 1];
     const float* data = static_cast<float*>(logprobs->data);
+    std::cout << "SEQ LEN = " << seq_length << " VOCAB LEN = " << vocab_length << std::endl;
 
     size_t continuation_length = continuation_tokens.size();
+    std::cout << "CONT LEN = " << continuation_length << std::endl;
 
     // Calculate is_greedy
     std::vector<int32_t> greedy_tokens = this->LogProbsArgmax(data, seq_length, vocab_length);
     bool is_greedy = true;
     size_t offset = seq_length - continuation_length;
+    std::cout << "OFFSET = " << offset << std::endl;
+    std::cout << "GREEDY TOKENS = [";
+    for (size_t i = 0; i < continuation_length; ++i) {
+      std::cout << " " << greedy_tokens[i + offset];
+    }
+    std::cout << " ]" << std::endl;
     for (size_t i = 0; i < continuation_length; ++i) {
       if (greedy_tokens[i + offset] != continuation_tokens[i]) {
         is_greedy = false;
@@ -1464,6 +1484,15 @@ class LLMChat {
     ICHECK_EQ(logits_on_cpu_->ndim, 3) << "logits_on_cpu_ should be 3D";
     ICHECK_EQ(logits_on_cpu_->shape[0], 1) << "logits_on_cpu_ should be 1 batch";
     return fsample_topp_from_prob_(logits_on_cpu_, top_p, GetRandomNumber());
+  }
+
+  void PrintNDArray(const NDArray& array, const std::string& tag, size_t num = 100) {
+    std::cout << tag << " [";
+    const float* data = static_cast<float*>(array->data);
+    for (size_t i = 0; i < num; ++i) {
+      std::cout << " " << data[i];
+    }
+    std::cout << " ]" << std::endl;
   }
 
   /*!

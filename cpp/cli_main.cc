@@ -459,7 +459,7 @@ void Chat(ChatModule* chat, const std::string& device_name, std::string local_id
   ModelPaths model = ModelPaths::Find(device_name, local_id, lib_path);
   PrintSpecialCommands();
   chat->Reload(model);
-  chat->ProcessSystemPrompts();
+  // chat->ProcessSystemPrompts();
   while (true) {
     std::string input;
     std::cout << chat->GetRole0() << ": " << std::flush;

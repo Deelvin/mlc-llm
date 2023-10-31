@@ -52,9 +52,8 @@ Conversation LlamaDefault() {
 Conversation Llama2() {
   Conversation conv;
   conv.name = "llama-2";
-  // TODO(vvchernov): return system prompt, it was hidden for loglikelihood calculation (need redo)
-  // conv.system =
-  //     ("[INST] <<SYS>>\n\nYou are a helpful, respectful and honest assistant.\n<</SYS>>\n\n ");
+  conv.system =
+      ("[INST] <<SYS>>\n\nYou are a helpful, respectful and honest assistant.\n<</SYS>>\n\n ");
   conv.roles = {"[INST]", "[/INST]"};
   conv.messages = {};
   conv.offset = 0;
