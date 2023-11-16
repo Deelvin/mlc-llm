@@ -282,7 +282,9 @@ class ChatModule {
    */
   void Decode() { decode_(); }
 
-  void LogProbe(const std::string& context, const std::string& continuation) { logprobe_(context, continuation); }
+  void LogProbe(const std::string& context, const std::string& continuation) {
+    logprobe_(context, continuation);
+  }
 
   /*! \return Whether the current round stopped. */
   bool Stopped() { return stopped_(); }

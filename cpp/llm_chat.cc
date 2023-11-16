@@ -901,9 +901,9 @@ class LLMChat {
     std::vector<int32_t> prompt_tokens = this->tokenizer_->Encode(inp);
     int64_t token_len = static_cast<int64_t>(prompt_tokens.size());
     std::cout << "ENCODED FULL PROMPT (SIZE = " << token_len << "): [";
-      for (int64_t i = 0; i < token_len; ++i) {
-        std::cout << " " << prompt_tokens[i];
-      }
+    for (int64_t i = 0; i < token_len; ++i) {
+      std::cout << " " << prompt_tokens[i];
+    }
     std::cout << " ]" << std::endl;
     if (token_len == 0) {
       picojson::object config;
@@ -931,9 +931,9 @@ class LLMChat {
       continuation_tokens.erase(continuation_tokens.begin());
     }
     std::cout << "ENCODED CONTINUATION WITH ERASE (SIZE = " << continuation_tokens.size() << "): [";
-      for (int64_t i = 0; i < continuation_tokens.size(); ++i) {
-        std::cout << " " << continuation_tokens[i];
-      }
+    for (int64_t i = 0; i < continuation_tokens.size(); ++i) {
+      std::cout << " " << continuation_tokens[i];
+    }
     std::cout << " ]" << std::endl;
 
     std::vector<int32_t> cut_tokens = prompt_tokens;
