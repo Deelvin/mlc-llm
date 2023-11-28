@@ -933,6 +933,13 @@ def build_model_from_args(args: argparse.Namespace):
                     repetition_penalty=0.996,
                     rwkv_world=True,
                 )
+            elif args.model_category == "chatglm":
+                dump_mlc_chat_config(
+                    args,
+                    vocab_size=config["padded_vocab_size"],
+                    max_window_size=model_config.max_sequence_length,
+                    max_gen_len=model_config.max_sequence_length,
+                )
             else:
                 dump_mlc_chat_config(
                     args,
@@ -979,7 +986,6 @@ def build_model_from_args(args: argparse.Namespace):
             mod_transform = seq(mod_transform)
 
             params = utils.convert_weights(mod_transform, param_manager, params, args)
-<<<<<<< HEAD
 
             if args.num_shards > 1 and use_ft_quant:
                 preprocessed = []
@@ -1056,7 +1062,6 @@ def build_model_from_args(args: argparse.Namespace):
 
         if args.model_category != "minigpt":
             utils.copy_tokenizer(args)
-=======
 
             if args.quantization.name.startswith("smq_q8i8f16"):
                 model_names = get_model_names(args)
@@ -1067,7 +1072,6 @@ def build_model_from_args(args: argparse.Namespace):
                 params, args.artifact_path, args.num_shards if args.use_presharded_weights else 1
             )
 
-<<<<<<< HEAD
             if args.model_category != "minigpt":
                 utils.copy_tokenizer(args)
             if args.model_category == "rwkv" or args.model_category == "rwkv_world":
@@ -1096,10 +1100,7 @@ def build_model_from_args(args: argparse.Namespace):
                     max_window_size=model_config.max_sequence_length,
                     max_gen_len=model_config.max_sequence_length,
                 )
->>>>>>> 8a3e469... [SmoothQuant] Merge smoothing and params transform into one step
 
-=======
->>>>>>> efd4243 ([SmoothQuant] Merge smoothing and params transform into one step)
         if args.convert_weights_only:
             exit(0)
 
