@@ -217,6 +217,9 @@ def _prepare_inputs(
             block_tables.append(block_table.get_blocks())
             slot_mapping.append(all_slot_mappings[sequence_id][-1])
 
+            if positions[-1] % 16 != slot_mapping[-1] % 16:
+                print(f"! ERROR ! positions {positions[-1]} slot_mapping {slot_mapping[-1]} prompt_lens {prompt_lens[i]} block_tables {block_tables[-1]}")
+
             if sliding_window:
                 seq_lens.append(min(seq_len, sliding_window))
             else:
@@ -274,6 +277,9 @@ class Model:
             self.block_sliding_window = self.sliding_window // CacheManager.block_size
         else:
             self.block_sliding_window = None
+
+        self.layers = config.num_hidden_layers
+        self.dump_debug_nan = True
 
         if self.disco_session:
             self.copy_cache_blocks_func = self.disco_session.get_global_func(
@@ -425,6 +431,17 @@ class Model:
             if self.disco_session:
                 block_tables = copy_to_worker_0(self.disco_session, block_tables)
 
+            if self.dump_debug_nan:
+                dump_dir = "./dump_nan"
+                np.save(dump_dir + "/input_ids", torch.from_dlpack(input_ids).cpu().numpy())
+                np.save(dump_dir + "/positions", torch.from_dlpack(positions).cpu().numpy())
+                np.save(dump_dir + "/seq_lens", torch.from_dlpack(seq_lens).cpu().numpy())
+                np.save(dump_dir + "/slot_mapping", torch.from_dlpack(slot_mapping).cpu().numpy())
+                np.save(dump_dir + "/block_tables", torch.from_dlpack(block_tables).cpu().numpy())
+
+                for i in range(self.layers * 2):
+                    np.save(dump_dir + f"/kv_cache{i}", torch.from_dlpack(cache.cache_blocks[i]).cpu().numpy())
+
             out = self.mod["decode"](
                 input_ids,
                 positions,
@@ -439,6 +456,8 @@ class Model:
                 logits, _ = out.debug_get_from_remote(0)
             else:
                 logits = out[0]
+            if self.dump_debug_nan:
+                np.save(dump_dir + "/logits", torch.from_dlpack(logits).cpu().numpy())
 
         torch.cuda.synchronize()
         torch.cuda.nvtx.range_pop()
@@ -493,6 +512,7 @@ class Model:
                 "Error from sampling: probability tensor contains either `inf`, `nan`"
                 " or element < 0"
             )
+            self.dump_debug_nan = False
 
             for i, (sequence_id, logits_per_token, sampling_param) in enumerate(
                 zip(sequence_ids, torch.from_dlpack(logits), sampling_params)
@@ -631,6 +651,8 @@ class PagedCacheModelModule:
         else:
             num_blocks = 500
 
+        num_blocks = 128
+
         num_cache_slots = num_blocks * CacheManager.block_size
 
         if num_cache_slots <= engine_config.max_num_batched_tokens:
@@ -658,7 +680,6 @@ class PagedCacheModelModule:
             CacheManager.block_size,
             num_blocks,
         )
-
         cache_manager = CacheManager(
             cache_blocks,
             num_blocks,
