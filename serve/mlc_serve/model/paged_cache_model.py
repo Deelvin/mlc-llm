@@ -140,7 +140,8 @@ def sample(
         return None
 
     res_random = torch.multinomial(probs, 1, True).cpu().numpy()[:, 0]
-    res_random_logprobs = torch.gather(logprobs, dim=-1, index=torch.tensor(res_random, dtype=torch.int64, device=logits.device)).cpu().numpy()
+    # TODO(vvchernov): check logprobs shape
+    res_random_logprobs = torch.gather(logprobs.reshape(-1), dim=-1, index=torch.tensor(res_random, dtype=torch.int64, device=logits.device)).cpu().numpy()
 
     if logits_random.shape[0] == num_seq:
         return res_random, (res_random_logprobs, (top_random, top_random_logprob))
@@ -531,7 +532,7 @@ class Model:
                             sequence_id=sequence_id,
                             generated_tokens=[new_token],
                             error=None,
-                            logprob_info=fetch_logprobs(logprob_info, index, sampling_params[index]),
+                            logprob_info=fetch_logprobs(logprob_info, i, sampling_params[i]),
                         )
                     )
 

@@ -6,7 +6,7 @@ import multiprocessing
 import queue
 from threading import Lock
 from collections import defaultdict
-from typing import Callable, Tuple, List
+from typing import Callable, Tuple, List, Dict
 
 import structlog
 
@@ -37,13 +37,13 @@ from ..logging_utils import log_every
 LOG = structlog.stdlib.get_logger(__name__)
 
 
-def logprob_detokenize(tokenizer: Tokenizer, logprob_info: Tuple[Tuple, List[Tuple]]) -> Tuple[Tuple, List[Tuple]]:
+def logprob_detokenize(tokenizer: Tokenizer, logprob_info: Tuple[Tuple, List[Tuple]]) -> Tuple[Tuple, Dict[str, float]]:
     """Detokenize logprob information"""
     if logprob_info is None:
         return None
     (res, res_logprob), top_tokens = logprob_info
     top_tokens = list(top_tokens)
-    count = {}
+    count: Dict[str, int] = {}
     logprob_dict = {}
     # dedup duplicates
     # Todo: Make sure decode can generate different tokens
