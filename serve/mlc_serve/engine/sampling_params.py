@@ -83,9 +83,9 @@ class SamplingParams:
                 f"top_k must be -1 (disable), or at least 1, " f"got {self.top_k}."
             )
         if self.logprobs is not None and self.logprobs:
-            if (self.top_logprobs < 0 or self.top_logprobs > TOP_LOGPROBS_NUMBER):
+            if (self.top_logprobs < 1 or self.top_logprobs > TOP_LOGPROBS_NUMBER):
                 raise ValueError(
-                    f"top_logprobs must be between 0 and {TOP_LOGPROBS_NUMBER}, got {self.top_logprobs}."
+                    f"top_logprobs must be between 1 and {TOP_LOGPROBS_NUMBER}, got {self.top_logprobs}."
                 )
 
     def _verify_greedy_sampling(self) -> None:
