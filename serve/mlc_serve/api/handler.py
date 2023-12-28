@@ -242,10 +242,10 @@ async def collect_result_stream(
                     # TODO(vvchernov): implement bytes bases on https://platform.openai.com/docs/api-reference/chat/object
                     "bytes": None,
                     "top_logprobs": [{
-                        "token": str(top_logprob[0]),
-                        "logprob": float(top_logprob[1]),
+                        "token": token,
+                        "logprob": float(logprob),
                         "bytes": None,
-                    } for top_logprob in logprob_info[1]],
+                    } for token, logprob in logprob_info[1].items()],
                 })
         choice = ChatCompletionResponseChoice(
             index=index,

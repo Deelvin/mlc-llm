@@ -23,6 +23,7 @@ from .engine_common import (
     get_requests_to_process,
     update_sequence,
     EngineBase,
+    logprob_detokenize
 )
 from .model_module import (
     ModelModule,
@@ -218,7 +219,7 @@ class SynchronousInferenceEngine(InferenceEngine, EngineBase):
                     delta,
                     num_generated_tokens=len(gen_seq.generated_token_ids),
                     finish_reason=finish_reason,
-                    logprob_info=res.logprob_info,
+                    logprob_info=logprob_detokenize(self.tokenizer, res.logprob_info),
                 )
             )
 

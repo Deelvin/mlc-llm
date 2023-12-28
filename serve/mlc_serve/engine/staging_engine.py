@@ -22,8 +22,9 @@ from .base import (
 from .engine_common import (
     get_new_request_state,
     update_sequence,
+    logprob_detokenize
 )
-from .model_module import ModelModule, TokenizerModule, Tokenizer
+from .model_module import ModelModule, TokenizerModule
 from .staging_engine_worker import (
     AddRequestsCommand,
     CancelRequestCommand,
@@ -36,30 +37,6 @@ from ..logging_utils import log_every
 
 LOG = structlog.stdlib.get_logger(__name__)
 
-
-def logprob_detokenize(tokenizer: Tokenizer, logprob_info: Tuple[Tuple, List[Tuple]]) -> Tuple[Tuple, Dict[str, float]]:
-    """Detokenize logprob information"""
-    if logprob_info is None:
-        return None
-    (res, res_logprob), top_tokens = logprob_info
-    top_tokens = list(top_tokens)
-    count: Dict[str, int] = {}
-    logprob_dict = {}
-    # dedup duplicates
-    # Todo: Make sure decode can generate different tokens
-    for top_token, _ in top_tokens:
-        detokenized = tokenizer.decode(top_token)
-        if detokenized in count:
-            count[detokenized] += 1
-        else:
-            count[detokenized] = 1
-    for top_token, top_logprob in top_tokens:
-        detokenized = tokenizer.decode(top_token)
-        if count[detokenized] == 1:
-            logprob_dict[detokenized] = float(top_logprob)
-        else:
-            logprob_dict[f"{detokenized}_{top_token}"] = float(top_logprob)
-    return (str(tokenizer.decode(res)), res_logprob), logprob_dict
 
 class StagingInferenceEngine(ScopedInferenceEngine):
     """
