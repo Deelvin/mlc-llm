@@ -146,7 +146,7 @@ def main(args: argparse.Namespace):
     random.seed(args.seed)
     np.random.seed(args.seed)
 
-    api_url = f"http://127.0.0.1:8000/v1/chat/completions"
+    api_url = f"http://127.0.0.1:9000/v1/chat/completions"
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, trust_remote_code=False)
 
     input_requests = sample_requests(args.dataset, args.num_prompts, tokenizer)
