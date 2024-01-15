@@ -177,6 +177,18 @@ class BuildArgs:
             "choices": [*utils.quantization_schemes.keys()],
         },
     )
+    num_calib_samples: int = field(
+        default=200,
+        metadata={
+            "help": "Utility argument for smq accuracy measurement"
+        }
+    )
+    alpha: float = field(
+        default=200,
+        metadata={
+            "help": "Utility argument for smq accuracy measurement"
+        }
+    )
     max_seq_len: int = field(
         default=-1,
         metadata={"help": "The maximum allowed sequence length for the model."},

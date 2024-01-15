@@ -18,7 +18,7 @@ from ..transform.smoothquant import SCALE_PREFIX_NAME, ZP_PREFIX_NAME
 
 
 # List of supported calibration datasets.
-dataset_list = ["dummy", "piqa", "gsm8k"]
+dataset_list = ["dummy", "piqa", "gsm8k", "trivia_qa"]
 
 
 def get_runtime_func(funcs: List[str], mod: tvm.IRModule):
@@ -59,15 +59,20 @@ def _accumulate_outlier_stat(stat, data, func: Callable = np.maximum):
     return stat
 
 
-def _accumulate_act_outlier_stat(stat: List[np.ndarray], data: List[tvm.nd.NDArray]):
+def _accumulate_act_outlier_stat(stat: List[np.ndarray], data: List[tvm.nd.NDArray], idx: int = None):
     a_data = data[::2]
+    if idx:
+        np.save(f"/home/ikozulin/dev/acts_sample_{idx}.npy", np.array([data.numpy() for data in a_data], dtype="object"))
     return _accumulate_outlier_stat(stat, a_data)
 
 
-def _accumulate_weight_outlier_stat(stat: List[np.ndarray], data: List[tvm.nd.NDArray]):
+def _accumulate_weight_outlier_stat(stat: List[np.ndarray], data: List[tvm.nd.NDArray], idx: int = None):
     # Optimization step: no need to accumulate weights for each new element in dataset since
     # weights are the same.
     if stat is not None:
+        w_data = data[1::2]
+        if idx:
+            np.save(f"/home/ikozulin/dev/weights_sample_{idx}.npy", np.array([data.numpy() for data in w_data], dtype="object"))
         return stat
     w_data = data[1::2]
     return _accumulate_outlier_stat(stat, w_data)
@@ -254,8 +259,8 @@ def _smooth(
             num_tokens += logits_max.shape[1]
             seq_len_shape = tvm.runtime.ShapeTuple([num_tokens])
             (logits, kv_caches), outputs = decode(next_token, seq_len_shape, kv_caches, *params)
-            a_stat = _accumulate_act_outlier_stat(a_stat, outputs)
-            w_stat = _accumulate_weight_outlier_stat(w_stat, outputs)
+            a_stat = _accumulate_act_outlier_stat(a_stat, outputs, idx=_+1)
+            w_stat = _accumulate_weight_outlier_stat(w_stat, outputs, idx=_+1)
 
     # Use the same statistics for "prefill"/"decode"
     stat = dict.fromkeys(funcs)
@@ -339,10 +344,10 @@ def smoothquant(
     # Free memory on the host:
     cpu_params.clear()
 
-    dataset, stop_tokens = _get_dataset(args.dataset, args.artifact_path, device=smq_device)
+    dataset, stop_tokens = _get_dataset(args.dataset, args.artifact_path, device=smq_device, num_calib_samples=args.num_calib_samples)
     smq_config: Dict[str, Any] = {}
     smq_config["decoder_invoke_num"] = 5
-    smq_config["alpha"] = 0.5
+    smq_config["alpha"] = args.alpha
     smq_config["stop_tokens"] = stop_tokens
     smq_config["adtype"] = "int8"
     smq_config["wdtype"] = "int8"
@@ -423,7 +428,7 @@ def _prepare_dummy_dataset(artifact_path: str):
     return data_files
 
 
-def _get_dataset(name: str, artifact_path: str, device: tvm.runtime.Device):
+def _get_dataset(name: str, artifact_path: str, device: tvm.runtime.Device, num_calib_samples: int):
     print("[SmoothQuant] Starting to initialize tokenizer...")
     tokenizer_path = os.path.join(artifact_path, "params")
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True)
@@ -432,15 +437,19 @@ def _get_dataset(name: str, artifact_path: str, device: tvm.runtime.Device):
     if name not in dataset_list:
         raise ValueError(f"Dataset {name} is not supported")
     config_name = None
-    split = "train"
+    data_files = None
+    split = "validation"
     if name == "piqa":
-        data_files = None
         text_name = "goal"
     elif name == "gsm8k":
-        data_files = None
         text_name = "question"
         config_name = "main"
         split = "test[:10%]"
+    elif name == "trivia_qa":
+        text_name = "question"
+        config_name = "rc.nocontext"
+        triviaqa_num_samples = num_calib_samples
+        split += f"[:{triviaqa_num_samples}]"
     else:
         # Dummy dataset consisting of 4 simple questions.
         name = text_name = "text"
