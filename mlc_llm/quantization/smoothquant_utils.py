@@ -59,20 +59,15 @@ def _accumulate_outlier_stat(stat, data, func: Callable = np.maximum):
     return stat
 
 
-def _accumulate_act_outlier_stat(stat: List[np.ndarray], data: List[tvm.nd.NDArray], idx: int = None):
+def _accumulate_act_outlier_stat(stat: List[np.ndarray], data: List[tvm.nd.NDArray]):
     a_data = data[::2]
-    if idx:
-        np.save(f"/home/ikozulin/dev/acts_sample_{idx}.npy", np.array([data.numpy() for data in a_data], dtype="object"))
     return _accumulate_outlier_stat(stat, a_data)
 
 
-def _accumulate_weight_outlier_stat(stat: List[np.ndarray], data: List[tvm.nd.NDArray], idx: int = None):
+def _accumulate_weight_outlier_stat(stat: List[np.ndarray], data: List[tvm.nd.NDArray]):
     # Optimization step: no need to accumulate weights for each new element in dataset since
     # weights are the same.
     if stat is not None:
-        w_data = data[1::2]
-        if idx:
-            np.save(f"/home/ikozulin/dev/weights_sample_{idx}.npy", np.array([data.numpy() for data in w_data], dtype="object"))
         return stat
     w_data = data[1::2]
     return _accumulate_outlier_stat(stat, w_data)
@@ -259,8 +254,8 @@ def _smooth(
             num_tokens += logits_max.shape[1]
             seq_len_shape = tvm.runtime.ShapeTuple([num_tokens])
             (logits, kv_caches), outputs = decode(next_token, seq_len_shape, kv_caches, *params)
-            a_stat = _accumulate_act_outlier_stat(a_stat, outputs, idx=_+1)
-            w_stat = _accumulate_weight_outlier_stat(w_stat, outputs, idx=_+1)
+            a_stat = _accumulate_act_outlier_stat(a_stat, output)
+            w_stat = _accumulate_weight_outlier_stat(w_stat, outputs)
 
     # Use the same statistics for "prefill"/"decode"
     stat = dict.fromkeys(funcs)
