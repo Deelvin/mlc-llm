@@ -18,7 +18,7 @@ from ..transform.smoothquant import SCALE_PREFIX_NAME, ZP_PREFIX_NAME
 
 
 # List of supported calibration datasets.
-dataset_list = ["dummy", "piqa", "gsm8k"]
+dataset_list = ["dummy", "piqa", "gsm8k", "trivia_qa", "cnn_dailymail"]
 
 
 def get_runtime_func(funcs: List[str], mod: tvm.IRModule):
@@ -221,6 +221,7 @@ def _smooth(
     funcs: List[str],
     dataset: List[tvm.nd.NDArray],
     config: Dict[str, Any],
+    optimize_alpha: bool = False
 ):
     mod = mlc_llm.transform.SmoothQuantAnnotator()(mod)
     stat_mod = mlc_llm.transform.SmoothQuantStatCollector()(mod)
@@ -423,7 +424,7 @@ def _prepare_dummy_dataset(artifact_path: str):
     return data_files
 
 
-def _get_dataset(name: str, artifact_path: str, device: tvm.runtime.Device):
+def _get_dataset(name: str, artifact_path: str, device: tvm.runtime.Device, num_calib_samples: int = 275):
     print("[SmoothQuant] Starting to initialize tokenizer...")
     tokenizer_path = os.path.join(artifact_path, "params")
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True)
@@ -432,15 +433,22 @@ def _get_dataset(name: str, artifact_path: str, device: tvm.runtime.Device):
     if name not in dataset_list:
         raise ValueError(f"Dataset {name} is not supported")
     config_name = None
-    split = "train"
+    data_files = None
+    split = "validation"
     if name == "piqa":
-        data_files = None
         text_name = "goal"
     elif name == "gsm8k":
-        data_files = None
         text_name = "question"
         config_name = "main"
         split = "test[:10%]"
+    elif name == "trivia_qa":
+        text_name = "question"
+        config_name = "rc.nocontext"
+        split += f"[:{num_calib_samples}]"
+    elif name == "cnn_dailymail":
+        text_name = "article"
+        config_name = "3.0.0"
+        split = f"train[:{num_calib_samples}]"
     else:
         # Dummy dataset consisting of 4 simple questions.
         name = text_name = "text"

@@ -576,12 +576,7 @@ def get_cuda_sm_version():
     return sm
 
 
-def mod_transform_before_build(
-    mod: tvm.IRModule,
-    param_manager: param_manager.ParamManager,
-    args: argparse.Namespace,
-    config: Dict,
-) -> tvm.IRModule:
+def get_model_names(args: argparse.Namespace) -> tvm.IRModule:
     """First-stage: Legalize ops and trace"""
     if args.model.startswith("minigpt"):
         model_names = ["embed"]
