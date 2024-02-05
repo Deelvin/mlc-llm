@@ -6,10 +6,6 @@ from tvm.relax.dpl import rewrite_call, is_op, wildcard
 from tvm.relax.expr_functor import PyExprMutator, mutator
 from tvm.script import relax as R
 
-#from ..quantization.smoothquant_utils import (
-#    SCALE_PREFIX_NAME, ZP_PREFIX_NAME, _try_convert_to_scalar_const
-#)
-
 from typing import Dict, List, Union
 from enum import Enum
 
@@ -150,6 +146,147 @@ class SmoothQuantAnnotator:
     def transform_module(self, irmod: tvm.IRModule, ctx: tvm.transform.PassContext) -> tvm.IRModule:
         return Annotator(irmod, self.op_mode).transform()
 
+@mutator
+class ParamsAndOutputsMutator(PyExprMutator):
+    def __init__(self, mod: tvm.IRModule, stat: str = "ranges") -> None:
+        super().__init__(mod)
+        self.mod = mod
+        self.stat = stat
+        self.var2val: Dict[relax.Var, relax.Expr] = {}
+        self.profile_points = []
+        self.params_to_remove = []
+
+        self.input = wildcard()
+        self.weights = wildcard()
+        lhs_quantize = is_op("relax.quantize")(self.input, wildcard(), wildcard())
+        self.lhs_sm = (
+            is_op("relax.dequantize")(lhs_quantize, wildcard(), wildcard()) |
+            is_op("relax.divide")(self.input, wildcard())
+        )
+        rhs_quantize = is_op("relax.quantize")(self.weights, wildcard(), wildcard())
+        self.rhs_sm = (
+            is_op("relax.dequantize")(rhs_quantize, wildcard(), wildcard()) |
+            is_op("relax.multiply")(self.weights, wildcard())
+        )
+        self.permute = is_op("relax.permute_dims")(self.rhs_sm)
+        self.pattern = is_op("relax.matmul")(self.lhs_sm, self.permute)
+    
+    def transform(self) -> tvm.IRModule:
+        for gv, func in self.mod.functions.items():
+            if not isinstance(func, relax.Function):
+                continue
+            self.var2val = tvm.relax.analysis.get_var2val(func)
+            self.profile_points = []
+            self.params_to_remove = []
+            updated_func = self.visit_expr(func)
+            updated_func = remove_all_unused(updated_func)
+            self.builder_.update_func(gv, updated_func)
+        return self.builder_.get()
+    
+    def visit_function_(self, f):
+        body = super().visit_expr(f.body)
+        new_params = [param for param in f.params if param not in self.params_to_remove]
+        return relax.Function(new_params, body, None, f.is_pure, f.attrs, f.span)
+    
+    def visit_seq_expr_(self, op: relax.SeqExpr) -> relax.Expr:
+        op = super().visit_seq_expr_(op)
+        if len(self.profile_points) != 0:
+            new_body = relax.Tuple([op.body, *self.profile_points])
+            return relax.SeqExpr(op.blocks, new_body, op.span)
+        return op
+
+    def visit_dataflow_block_(self, block: relax.DataflowBlock) -> relax.DataflowBlock:
+        self.builder_._begin_dataflow_block()
+        for binding in block.bindings:
+            self.visit_binding(binding)
+        # Mark all profile points as new outputs in the block.
+        if len(self.profile_points) != 0:
+            self.profile_points = [self.builder_.emit_output(self.profile_points)]
+        return self.builder_._end_block()
+
+    def visit_call_(self, call: relax.Call) -> relax.Expr:
+        call = super().visit_call_(call)
+        matchings = self.pattern.extract_matched_expr(call, self.var2val)
+        if matchings:
+            data = matchings[self.input]
+            weights = matchings[self.weights]
+            lhs_op = matchings[self.lhs_sm]
+            rhs_op = matchings[self.rhs_sm]
+            if self.stat == "errors":
+                quantization_error = self._calculate_quantization_error(data, weights)
+                self.profile_points.append(quantization_error)
+            else:
+                if lhs_op.op == tvm.ir.Op.get("relax.divide") and rhs_op.op == tvm.ir.Op.get("relax.multiply"):
+                    a_out = self._emit_abs_max_ops_chain(data)
+                    w_out = self._emit_abs_max_ops_chain(weights)
+                    self.profile_points.extend([a_out, w_out])
+                    self.params_to_remove.extend([lhs_op.args[1], rhs_op.args[1]])
+                else:
+                    assert lhs_op.op == tvm.ir.Op.get("relax.dequantize")
+                    assert rhs_op.op == tvm.ir.Op.get("relax.dequantize")
+                    a_max_out, a_min_out = self._emit_max_min_ops_chain(data, axis=-2)
+                    w_max_out, w_min_out = self._emit_max_min_ops_chain(weights, axis=-1)
+                    self.profile_points.extend([a_max_out, a_min_out, w_max_out, w_min_out])
+                    self.params_to_remove.extend(
+                        [lhs_op.args[1], rhs_op.args[1], lhs_op.args[2], rhs_op.args[2]]
+                    )
+            return self.builder_.emit(R.linear(data, weights))
+
+        return call
+
+    def _emit_abs_max_ops_chain(self, expr: relax.Var) -> relax.Var:
+        assert expr.struct_info.ndim >= 2, "Tensor dim num should be >= 2"
+        abs_expr = self.builder_.emit(R.abs(expr))
+        max_expr = self.builder_.emit(R.max(abs_expr, axis=-2))
+        if expr.struct_info.ndim > 2:
+            max_expr = self.builder_.emit(R.squeeze(max_expr))
+        return max_expr
+
+    def _emit_max_min_ops_chain(self, expr: relax.Var, axis: int) -> List[relax.Var]:
+        assert expr.struct_info.ndim >= 2, "Tensor dim num should be >= 2"
+        max_expr = self.builder_.emit(R.max(expr, axis=axis))
+        min_expr = self.builder_.emit(R.min(expr, axis=axis))
+        if expr.struct_info.ndim > 2:
+            max_expr = self.builder_.emit(R.squeeze(max_expr))
+            min_expr = self.builder_.emit(R.squeeze(min_expr))
+        return max_expr, min_expr
+    
+    def _calculate_quantization_error(self, data: relax.Var, weights: relax.Var):
+        def _make_param(param_name: str, shape, dtype: str) -> tvm.relax.Var:
+            param = relax.Var(param_name, relax.TensorStructInfo(shape, dtype))
+            self.sm_counter += 1
+            self.new_params.append(param)
+            return param
+
+        def _make_scale_param(shape: relax.ShapeExpr, dtype: str, kind: QKind) -> tvm.relax.Var:
+            axis = -1
+            if kind == QKind.KIND_WEIGHTS and self.op_mode.startswith("smq_q8i8f16"):
+                axis = -2
+            n = shape[axis]
+            scale = _make_param(f"{SCALE_PREFIX_NAME}{self.sm_counter}", shape=[n], dtype=dtype)
+            return scale, axis
+
+        def _make_zero_point_param(shape: relax.ShapeExpr, dtype: str) -> tvm.relax.Var:
+            return _make_param(f"{ZP_PREFIX_NAME}{self.sm_counter}", shape=shape, dtype=dtype)
+
+        a_scale, a_axis = _make_scale_param(data.struct_info.shape, data.struct_info.dtype, kind=QKind.KIND_ACT)
+        w_scale, w_axis = _make_scale_param(weights.struct_info.shape, weights.struct_info.dtype, kind=QKind.KIND_WEIGHTS)
+        a_zp = _make_zero_point_param(a_scale.struct_info.shape, dtype=data.struct_info.dtype)
+        w_zp = _make_zero_point_param(w_scale.struct_info.shape, dtype=weights.struct_info.dtype)
+        qa = R.quantize(data, a_scale, a_zp, axis=a_axis, out_dtype=data.struct_info.dtype)
+        lhs = R.dequantize(qa, a_scale, a_zp, axis=a_axis, out_dtype=data.struct_info.dtype)
+        qw = R.quantize(weights, w_scale, w_zp, axis=w_axis, out_dtype=weights.struct_info.dtype)
+        rhs = R.dequantize(qw, w_scale, w_zp, axis=w_axis, out_dtype=weights.struct_info.dtype)
+        
+        result_of_original_matmul = R.linear(data, weights)
+        result_of_fake_quantized_matmul = R.linear(lhs, rhs)
+        num_elements = R.size(result_of_fake_quantized_matmul)
+        error = R.substract(result_of_original_matmul, result_of_fake_quantized_matmul)
+        squared_error = R.power(error, 2)
+        mse_loss = R.divide(R.sum(squared_error), num_elements)
+
+        return mse_loss
+
 
 @tvm.transform.module_pass(opt_level=0, name="SmoothQuantStatCollector")
 class SmoothQuantStatCollector:
@@ -162,109 +299,12 @@ class SmoothQuantStatCollector:
     2) Remove scale and zero_point params from relax.Function.
     3) Add new outputs in relax.Function that correspond to the last op in the sequance from 1).
     """
+    def __init__(self, stat: str = "ranges") -> None:
+        assert stat in ["ranges", "error"]
+        self.stat = stat
+
     def transform_module(self, mod: tvm.IRModule, ctx: tvm.transform.PassContext) -> tvm.IRModule:
-        @mutator
-        class ParamsAndOutputsMutator(PyExprMutator):
-            def __init__(self, mod: tvm.IRModule) -> None:
-                super().__init__(mod)
-                self.mod = mod
-                self.var2val: Dict[relax.Var, relax.Expr] = {}
-                self.profile_points = []
-                self.params_to_remove = []
-
-                self.input = wildcard()
-                self.weights = wildcard()
-                lhs_quantize = is_op("relax.quantize")(self.input, wildcard(), wildcard())
-                self.lhs_sm = (
-                    is_op("relax.dequantize")(lhs_quantize, wildcard(), wildcard()) |
-                    is_op("relax.divide")(self.input, wildcard())
-                )
-                rhs_quantize = is_op("relax.quantize")(self.weights, wildcard(), wildcard())
-                self.rhs_sm = (
-                    is_op("relax.dequantize")(rhs_quantize, wildcard(), wildcard()) |
-                    is_op("relax.multiply")(self.weights, wildcard())
-                )
-                self.permute = is_op("relax.permute_dims")(self.rhs_sm)
-                self.pattern = is_op("relax.matmul")(self.lhs_sm, self.permute)
-            
-            def transform(self) -> tvm.IRModule:
-                for gv, func in self.mod.functions.items():
-                    if not isinstance(func, relax.Function):
-                        continue
-                    self.var2val = tvm.relax.analysis.get_var2val(func)
-                    self.profile_points = []
-                    self.params_to_remove = []
-                    updated_func = self.visit_expr(func)
-                    updated_func = remove_all_unused(updated_func)
-                    self.builder_.update_func(gv, updated_func)
-                return self.builder_.get()
-            
-            def visit_function_(self, f):
-                body = super().visit_expr(f.body)
-                new_params = [param for param in f.params if param not in self.params_to_remove]
-                return relax.Function(new_params, body, None, f.is_pure, f.attrs, f.span)
-            
-            def visit_seq_expr_(self, op: relax.SeqExpr) -> relax.Expr:
-                op = super().visit_seq_expr_(op)
-                if len(self.profile_points) != 0:
-                    new_body = relax.Tuple([op.body, *self.profile_points])
-                    return relax.SeqExpr(op.blocks, new_body, op.span)
-                return op
-
-            def visit_dataflow_block_(self, block: relax.DataflowBlock) -> relax.DataflowBlock:
-                self.builder_._begin_dataflow_block()
-                for binding in block.bindings:
-                    self.visit_binding(binding)
-                # Mark all profile points as new outputs in the block.
-                if len(self.profile_points) != 0:
-                    self.profile_points = [self.builder_.emit_output(self.profile_points)]
-                return self.builder_._end_block()
-
-            def visit_call_(self, call: relax.Call) -> relax.Expr:
-                call = super().visit_call_(call)
-                matchings = self.pattern.extract_matched_expr(call, self.var2val)
-                if matchings:
-                    data = matchings[self.input]
-                    weights = matchings[self.weights]
-                    lhs_op = matchings[self.lhs_sm]
-                    rhs_op = matchings[self.rhs_sm]
-                    if lhs_op.op == tvm.ir.Op.get("relax.divide") and rhs_op.op == tvm.ir.Op.get("relax.multiply"):
-                        a_out = self._emit_abs_max_ops_chain(data)
-                        w_out = self._emit_abs_max_ops_chain(weights)
-                        self.profile_points.extend([a_out, w_out])
-                        self.params_to_remove.extend([lhs_op.args[1], rhs_op.args[1]])
-                    else:
-                        assert lhs_op.op == tvm.ir.Op.get("relax.dequantize")
-                        assert rhs_op.op == tvm.ir.Op.get("relax.dequantize")
-                        a_max_out, a_min_out = self._emit_max_min_ops_chain(data, axis=-2)
-                        w_max_out, w_min_out = self._emit_max_min_ops_chain(weights, axis=-1)
-                        self.profile_points.extend([a_max_out, a_min_out, w_max_out, w_min_out])
-                        self.params_to_remove.extend(
-                            [lhs_op.args[1], rhs_op.args[1], lhs_op.args[2], rhs_op.args[2]]
-                        )
-                    return self.builder_.emit(R.linear(data, weights))
-
-                return call
-
-            def _emit_abs_max_ops_chain(self, expr: relax.Var) -> relax.Var:
-                assert expr.struct_info.ndim >= 2, "Tensor dim num should be >= 2"
-                abs_expr = self.builder_.emit(R.abs(expr))
-                max_expr = self.builder_.emit(R.max(abs_expr, axis=-2))
-                if expr.struct_info.ndim > 2:
-                    max_expr = self.builder_.emit(R.squeeze(max_expr))
-                return max_expr
-
-            def _emit_max_min_ops_chain(self, expr: relax.Var, axis: int) -> List[relax.Var]:
-                assert expr.struct_info.ndim >= 2, "Tensor dim num should be >= 2"
-                max_expr = self.builder_.emit(R.max(expr, axis=axis))
-                min_expr = self.builder_.emit(R.min(expr, axis=axis))
-                if expr.struct_info.ndim > 2:
-                    max_expr = self.builder_.emit(R.squeeze(max_expr))
-                    min_expr = self.builder_.emit(R.squeeze(min_expr))
-                return max_expr, min_expr
-
-        return ParamsAndOutputsMutator(mod).transform()
-
+        return ParamsAndOutputsMutator(mod, self.stat).transform()
 
 def is_zero(expr: Union[int, tvm.relax.Constant]) -> bool:
     if isinstance(expr, int) and expr == 0:
