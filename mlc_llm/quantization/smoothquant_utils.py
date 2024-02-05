@@ -106,32 +106,41 @@ def _accumulate_max_min_stat(
 def _calculate_scale_params(
     func_name: str,
     stats,
-    config: Dict[str, Any],
     dev: tvm.runtime.Device,
+    alpha: List[float],
 ):
     if stats[func_name] is None:
         return {}
 
     # scales = act_scales.pow(alpha) / weight_scales.pow(1-alpha)
-    alpha = config["alpha"]
     a_stat, w_stat = stats[func_name]
     assert len(a_stat) == len(w_stat)
+    assert len(a_stat) == len(alpha)
     idx = 0
     scale_params = {}
-    for a_element, w_elemet in zip(a_stat, w_stat):
+    for a_element, w_elemet, alpha_param in zip(a_stat, w_stat, alpha):
         assert a_element.shape == w_elemet.shape
         assert len(a_element.shape) == 1
-        scales = np.power(a_element, alpha) / np.power(w_elemet, 1 - alpha)
+        scales = np.power(a_element, alpha_param) / np.power(w_elemet, 1 - alpha_param)
         if scales.size - np.count_nonzero(scales) > 0:
             print("Warning: Smoothing: scales have zero value")
             scales = np.ones_like(scales)
-            assert False, "Not supported case: please, add more elements in dataset. Otherwise, NaNs in output are possible."
         scale_params[f"sq_scale_{idx}"] = tvm.nd.array(scales, dev)
-        scale_params[f"sq_scale_{idx+1}"] = tvm.nd.array(scales, dev)
+        scale_params[f"sq_scale_{idx + 1}"] = tvm.nd.array(scales, dev)
         idx += 2
 
     return scale_params
 
+def _optimize_alpha_parameter(errors: List[tvm.nd.array]) -> List[float]:
+    assert len(errors) == 9
+
+    optim_values = []
+    for idx in range(len(errors)):
+        optim_index = np.argmin(errors[idx].numpy())
+        optim_alpha_value = round((optim_index + 1) / 10, 2)
+        optim_values.append(optim_alpha_value)
+    
+    return optim_values
 
 # Quantization algorithm for activations or weights.
 class QAlgo(Enum):
@@ -234,7 +243,7 @@ def _smooth(
     w_stat: List[np.ndarray] = None
 
     target = tvm.target.Target.current(allow_none=False)
-    for data in tqdm(dataset, desc="Smoothing"):
+    for data in tqdm(dataset, desc="Collecting outlier stats"):
         # Create KV-cache
         kv_caches = kvc()
         num_tokens = data.shape[1]
@@ -244,7 +253,6 @@ def _smooth(
         (logits, kv_caches), outputs = prefill(data, seq_len_shape, kv_caches, *params)
         a_stat = _accumulate_act_outlier_stat(a_stat, outputs)
         w_stat = _accumulate_weight_outlier_stat(w_stat, outputs)
-
         # Run Decoder and update statistics for activations/weights
         for _ in range(config["decoder_invoke_num"]):
             # TODO: support softmax with temperature.
@@ -262,8 +270,25 @@ def _smooth(
     stat = dict.fromkeys(funcs)
     stat["prefill"] = (a_stat, w_stat)
     stat["decode"] = (a_stat, w_stat)
-    for fname in funcs:
-        scale_params = _calculate_scale_params(fname, stat, config, tvm.cpu(0))
+    scale_powers = [config["alpha"]] * len(a_stat)
+
+    if optimize_alpha:
+        matmul_errors = []
+        for alpha in tqdm(np.arange(0.1, 0.9 + 0.1, 0.1), desc="Optimizing scale parameters"):
+            optim_mod = mlc_llm.transform.SmoothQuantStatCollector(stat="error")(mod)
+            for fname in funcs:
+                scale_params = _calculate_scale_params(fname, stat, tvm.cpu(0), alpha=[alpha] * len(a_stat))
+                optim_mod = relax.transform.BindParams(fname, scale_params)(optim_mod)
+            for data in dataset:
+                kv_caches = kvc()
+                num_tokens = data.shape[1]
+                seq_len_shape = tvm.runtime.ShapeTuple([num_tokens])
+                (logits, kv_caches), outputs = prefill(data, seq_len_shape, kv_caches, *params)
+                matmul_errors.append(outputs)
+        scale_powers = _optimize_alpha_parameter(matmul_errors)
+
+    for fname in tqdm(funcs, desc="Smoothing"):
+        scale_params = _calculate_scale_params(fname, stat, tvm.cpu(0), alpha=scale_powers)
         mod = relax.transform.BindParams(fname, scale_params)(mod)
     return mod
 
@@ -350,7 +375,7 @@ def smoothquant(
     smq_config["qscheme"] = args.quantization.name
     with target:
         print("[SmoothQuant] Run smoothing...")
-        mod = _smooth(mod, params, model_names, dataset, smq_config)
+        mod = _smooth(mod, params, model_names, dataset, smq_config, optimize_alpha=args.optimize_alpha)
         print("[SmoothQuant] Run calibration and quantization...")
         mod = _calibrate(mod, params, model_names, dataset, smq_config)
         print("[SmoothQuant] Smoothing and calibration were done!")

@@ -410,6 +410,15 @@ class BuildArgs:
             "choices": dataset_list,
         },
     )
+    optimize_alpha: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Optimize alpha parameter for smq_q8i8f16_* quantization"
+            ),
+            "action": "store_true"
+        }
+    )
 
     @property
     def convert_weight_only(self):
