@@ -1,6 +1,6 @@
 import math
 import os
-from typing import List, Union, Tuple, Sequence
+from typing import List, Tuple
 
 import structlog
 import numpy as np
@@ -10,22 +10,24 @@ from tvm import relax
 from tvm.runtime import disco as di
 
 from .base import ModelArtifactConfig
-from .paged_cache_manager import KVCache, CacheManager
+from .paged_cache_manager import KVCacheInfo, CacheManager
 from .model_common import (
-    sample,
+    sample_from_logits,
     prepare_inputs,
+    prepare_multi_query_decode_inputs,
     get_num_cache_blocks,
 )
 
 from ..engine import (
-    SequenceId,
-    PROMPT_SEQEUNCE_INDEX,
     get_prompt_sequence_id,
     MLCServeEngineConfig,
 )
 from ..engine.model_module import (
     DecodeRequest,
+    DraftTokens,
+    EvalMultiQueryRequest,
     PrefillRequest,
+    RequestsType,
     TextGenerationResult,
     TextGenerator,
 )
@@ -152,6 +154,8 @@ class Model:
                 "tvm.contrib.vllm.copy_blocks"
             )
 
+        self.cache_blocks = None
+
     def get_used_memory(self):
         if self.disco_session:
             params = self.params.debug_get_from_remote(0)
@@ -201,32 +205,104 @@ class Model:
 
         return self.get_used_memory()
 
+    def generate_multi_query(
+        self,
+        requests: List[EvalMultiQueryRequest],
+        cache: KVCacheInfo,
+    ) -> List[TextGenerationResult]:
+        sequence_ids = []
+        last_query_offsets: List[int] = []
+        for request in requests:
+            assert not isinstance(request.queries, DraftTokens)
+            sequence_ids.append(request.sequence_id)
+
+            if len(last_query_offsets) == 0:
+                last_query_offsets.append(request.queries.num_tokens - 1)
+            else:
+                last_query_offsets.append(
+                    last_query_offsets[-1] + request.queries.num_tokens
+                )
+
+        (
+            input_ids,
+            positions,
+            seq_lens,
+            slot_mapping,
+            query_lens,
+            past_slot_mapping,
+            permute_map,
+        ) = prepare_multi_query_decode_inputs(
+            requests,
+            cache.slot_mappings,
+            None,
+            self.dev,
+        )
+
+        torch.cuda.nvtx.range_push(f"forward multi-query decode {input_ids.shape}")
+
+        if self.disco_session:
+            input_ids = copy_to_worker_0(self.disco_session, input_ids)
+            positions = copy_to_worker_0(self.disco_session, positions)
+            seq_lens = copy_to_worker_0(self.disco_session, seq_lens)
+            slot_mapping = copy_to_worker_0(self.disco_session, slot_mapping)
+            query_lens = copy_to_worker_0(self.disco_session, query_lens)
+            past_slot_mapping = copy_to_worker_0(self.disco_session, past_slot_mapping)
+            permute_map = copy_to_worker_0(self.disco_session, permute_map)
+
+        out = self.mod["evaluate_multi_query"](
+            input_ids,
+            positions,
+            seq_lens,
+            self.cache_blocks,
+            slot_mapping,
+            query_lens,
+            past_slot_mapping,
+            permute_map,
+            self.params,
+        )
+
+        if self.disco_session:
+            logits, _ = out.debug_get_from_remote(0)
+        else:
+            logits = out[0]
+
+        torch.cuda.synchronize()
+        torch.cuda.nvtx.range_pop()
+
+        last_query_logits = torch.from_dlpack(logits)[last_query_offsets]
+
+        return sample_from_logits(
+            last_query_logits, sequence_ids, requests, self.vocab_size
+        )
+
     def generate(
         self,
-        requests: Sequence[Union[PrefillRequest, DecodeRequest]],
-        cache: KVCache,
+        requests: RequestsType,
+        cache: KVCacheInfo,
     ) -> List[TextGenerationResult]:
         if len(requests) == 0:
             return []
 
         is_prefill = isinstance(requests[0], PrefillRequest)
+        is_multi_query_decode = isinstance(requests[0], EvalMultiQueryRequest)
 
+        if is_multi_query_decode:
+            return self.generate_multi_query(requests, cache)  # type: ignore
+
+        # Prefill or decode
         all_token_ids = []
-        sampling_params = []
         sequence_ids = []
         prompt_lens = []
-        num_sequences = []
 
         for request in requests:
             if isinstance(request, PrefillRequest):
                 sequence_ids.append(get_prompt_sequence_id(request.request_id))
-                num_sequences.append(request.num_sequence)
-            else:
+            elif isinstance(request, DecodeRequest):
                 sequence_ids.append(request.sequence_id)
                 prompt_lens.append(request.prompt_token_counts)
 
+            assert not isinstance(request, EvalMultiQueryRequest)
             all_token_ids.append(request.token_ids)
-            sampling_params.append(request.sampling_params)
 
         (
             input_ids,
@@ -266,7 +342,7 @@ class Model:
                     input_ids,
                     positions,
                     seq_lens,
-                    cache.cache_blocks,
+                    self.cache_blocks,
                     slot_mapping,
                     indices_within_window,
                     self.params,
@@ -276,17 +352,10 @@ class Model:
                     input_ids,
                     positions,
                     seq_lens,
-                    cache.cache_blocks,
+                    self.cache_blocks,
                     slot_mapping,
                     self.params,
                 )
-
-            if self.disco_session:
-                logits, _ = out.debug_get_from_remote(0)
-            else:
-                logits = out[
-                    0
-                ]  # Ignore returned KV cache since it is updated in-place anyway.
         else:
             torch.cuda.nvtx.range_push(f"forward decode {input_shape}")
 
@@ -297,16 +366,18 @@ class Model:
                 input_ids,
                 positions,
                 seq_lens,
-                cache.cache_blocks,
+                self.cache_blocks,
                 slot_mapping,
                 block_tables,
                 self.params,
             )
 
-            if self.disco_session:
-                logits, _ = out.debug_get_from_remote(0)
-            else:
-                logits = out[0]
+        if self.disco_session:
+            logits, _ = out.debug_get_from_remote(0)
+        else:
+            logits = out[
+                0
+            ]  # Ignore returned KV cache since it is updated in-place anyway.
 
         torch.cuda.synchronize()
         torch.cuda.nvtx.range_pop()
@@ -324,105 +395,10 @@ class Model:
                     "int64",
                 )
 
-            self.copy_cache_blocks_func(cache.cache_blocks, block_mapping)
+            self.copy_cache_blocks_func(self.cache_blocks, block_mapping)
             cache.pending_copy_from_to = []
 
-        try:
-            next_tokens = sample(logits, sampling_params, self.vocab_size)
-            assert next_tokens is not None
-            outputs = []
-            for i, (sequence_id, new_token) in enumerate(
-                zip(sequence_ids, next_tokens)
-            ):
-                if not new_token in requests[i].sampling_params.appeared_tokens_freq:
-                    requests[i].sampling_params.appeared_tokens_freq[new_token] = 0
-                requests[i].sampling_params.appeared_tokens_freq[new_token] += 1
-                if sequence_id.sequence_index == PROMPT_SEQEUNCE_INDEX:
-                    for seq_id in range(num_sequences[i]):
-                        outputs.append(
-                            TextGenerationResult(
-                                sequence_id=SequenceId(sequence_id.request_id, seq_id),
-                                generated_tokens=[new_token],
-                                error=None,
-                            )
-                        )
-                else:
-                    outputs.append(
-                        TextGenerationResult(
-                            sequence_id=sequence_id,
-                            generated_tokens=[new_token],
-                            error=None,
-                        )
-                    )
-
-            return outputs
-        except RuntimeError:
-            # Fallback to per-token sampling in case some logits values are corrupted.
-            outputs = []
-            err_msg = (
-                "Error from sampling: probability tensor contains either `inf`, `nan`"
-                " or element < 0"
-            )
-
-            for i, (sequence_id, logits_per_token, sampling_param) in enumerate(
-                zip(sequence_ids, torch.from_dlpack(logits), sampling_params)
-            ):
-                maybe_new_token = sample(
-                    torch.unsqueeze(logits_per_token, 0),
-                    [sampling_param],
-                    self.vocab_size,
-                    check_safety=True,
-                )
-
-                if maybe_new_token is not None:
-                    new_token = maybe_new_token[0]
-                    if (
-                        not new_token
-                        in requests[i].sampling_params.appeared_tokens_freq
-                    ):
-                        requests[i].sampling_params.appeared_tokens_freq[new_token] = 0
-                    requests[i].sampling_params.appeared_tokens_freq[new_token] += 1
-                    if sequence_id.sequence_index == PROMPT_SEQEUNCE_INDEX:
-                        for seq_id in range(num_sequences[i]):
-                            outputs.append(
-                                TextGenerationResult(
-                                    sequence_id=SequenceId(
-                                        sequence_id.request_id, seq_id
-                                    ),
-                                    generated_tokens=[new_token],  # type: ignore
-                                    error=None,
-                                )
-                            )
-                    else:
-                        outputs.append(
-                            TextGenerationResult(
-                                sequence_id=sequence_id,
-                                generated_tokens=[new_token],  # type: ignore
-                                error=None,
-                            )
-                        )
-                else:
-                    if sequence_id.sequence_index == PROMPT_SEQEUNCE_INDEX:
-                        for seq_id in range(num_sequences[i]):
-                            outputs.append(
-                                TextGenerationResult(
-                                    sequence_id=SequenceId(
-                                        sequence_id.request_id, seq_id
-                                    ),
-                                    generated_tokens=[],
-                                    error=err_msg,
-                                )
-                            )
-                    else:
-                        outputs.append(
-                            TextGenerationResult(
-                                sequence_id=sequence_id,
-                                generated_tokens=[],
-                                error=err_msg,
-                            )
-                        )
-
-            return outputs
+        return sample_from_logits(logits, sequence_ids, requests, self.vocab_size)
 
 
 def init_tvm_model(
@@ -474,7 +450,7 @@ def init_tvm_model(
     else:
         init_cache_func = tvm.get_global_func("tvm.contrib.vllm.allocate_kv_cache")
 
-    cache_blocks = init_cache_func(
+    model.cache_blocks = init_cache_func(
         head_size,
         model_artifact_config.num_hidden_layers,
         num_kv_heads,
@@ -483,7 +459,6 @@ def init_tvm_model(
     )
 
     cache_manager = CacheManager(
-        cache_blocks,
         num_blocks,
         model_artifact_config.sliding_window,
     )

@@ -4,7 +4,14 @@ Required interfaces for the actual inference capability in InferenceEngine.
 from dataclasses import dataclass
 from typing import Optional, Protocol, Union, List, Sequence
 
-from .base import ChatMessage, RequestId, MLCServeEngineConfig, RequestState, SequenceId
+from .base import (
+    ChatMessage,
+    MLCServeEngineConfig,
+    RawLogprobsInfos,
+    RequestId,
+    RequestState,
+    SequenceId,
+)
 from ..model.base import ModelArtifactConfig
 from .sampling_params import SamplingParams
 
@@ -28,9 +35,39 @@ class PrefillRequest:
 class DecodeRequest:
     sequence_id: SequenceId
     prompt_token_counts: int
-    # All tokens for this request, including prompt
+    # Decoded tokens for this sequence
     token_ids: List[int]
     sampling_params: SamplingParams
+
+
+@dataclass
+class DraftTokens:
+    token_ids: List[int]
+
+    @property
+    def num_tokens(self):
+        return len(self.token_ids)
+
+
+@dataclass
+class EvictedTokens:
+    token_ids: List[int]
+
+    @property
+    def num_tokens(self):
+        return len(self.token_ids)
+
+
+@dataclass
+class EvalMultiQueryRequest:
+    sequence_id: SequenceId
+    num_past_tokens: int
+    queries: Union[DraftTokens, EvictedTokens]
+    sampling_params: SamplingParams
+
+
+RequestType = Union[PrefillRequest, DecodeRequest, EvalMultiQueryRequest]
+RequestsType = Sequence[RequestType]
 
 
 @dataclass
@@ -44,6 +81,7 @@ class TextGenerationResult:
     # making this a list of token ids to leave room for speculative decoding
     generated_tokens: List[int]
     error: Optional[str]
+    logprob_info: Optional[RawLogprobsInfos]
 
 
 class KVCache(Protocol):
@@ -117,7 +155,7 @@ class TextGenerator(Protocol):
 
     def generate(
         self,
-        requests: Sequence[Union[PrefillRequest, DecodeRequest]],
+        requests: Sequence[Union[PrefillRequest, DecodeRequest, EvalMultiQueryRequest]],
         kv_cache,
     ) -> List[TextGenerationResult]:
         """
