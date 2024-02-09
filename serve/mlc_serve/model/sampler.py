@@ -464,8 +464,8 @@ def sample(
                 logprob_infos[batch_idx] = RawLogprobsInfo(
                     current_token_id=next_token,
                     current_logprob=logprobs[batch_idx][next_token],
-                    top_token_ids=all_top_tokens[logprob_topk][idx],
-                    top_logprobs=all_top_logprobs[logprob_topk][idx],
+                    top_token_ids=all_top_tokens[logprob_topk][idx] if logprob_topk > 0 else None,
+                    top_logprobs=all_top_logprobs[logprob_topk][idx] if logprob_topk > 0 else None,
                 )
             else:
                 logprob_infos[batch_idx] = None
