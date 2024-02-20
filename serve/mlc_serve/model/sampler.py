@@ -73,10 +73,10 @@ class SamplingTensors:
             shape: (batch_size, )
         logit_bias_indices: torch.Tensor
             Tensor for indices of logit bias
-            shape: (num_logit_bias_pairs, )
+            shape: (batch_size, num_logit_bias_pairs, )
         logit_bias_values: torch.Tensor
             Tensor for values of logit bias
-            shape: (num_logit_bias_pairs, )
+            shape: (batch_size, num_logit_bias_pairs, )
         past_output_tokens: torch.Tensor
             Tensor for generated tokens
             shape: (batch_size, max_num_gen_tokens,)
@@ -223,11 +223,12 @@ class SamplingState:
             with logprob
         logprob_batch_indices: List[int]
             A list of indices of the requests with logprob inside the batch
+        top_logprobs_num: List[int]
+            A list of number of top logprobs for request corresponding index
+            from logprob_batch_indices
         sampling_tensors: SamplingTensors
             A set of torch tensors that contains masks and parameter
             values for sampling computation
-        sampling_params: List[SamplingParams]
-            A list of SamplingParams from the user request
     """
 
     has_random: bool
@@ -237,8 +238,8 @@ class SamplingState:
     apply_bias: bool
     has_logprob: bool
     logprob_batch_indices: List[int]
+    top_logprobs_num: List[int]
     sampling_tensors: SamplingTensors
-    sampling_params: List[SamplingParams]
 
     @classmethod
     def from_sampling_params(
@@ -269,6 +270,7 @@ class SamplingState:
         # index 0 is for non-logprob requests
         has_logprob = False
         logprob_batch_indices = []
+        top_logprobs_num = []
         list_mask_top_logprob = np.full(
             ((LOGPROB_TOP_K_MAX) + 1, batch_size), False, dtype=bool
         )
@@ -295,6 +297,8 @@ class SamplingState:
 
             if param.logprobs:
                 logprob_batch_indices.append(batch_idx)
+                # TODO(vvchernov): two containers for top_logprobs
+                top_logprobs_num.append(param.top_logprobs)
                 # param.top_logprobs is zero if logprob is not used
                 list_mask_top_logprob[param.top_logprobs][batch_idx] = param.logprobs
                 has_logprob |= True
@@ -367,8 +371,65 @@ class SamplingState:
             apply_bias,
             has_logprob,
             logprob_batch_indices,
+            top_logprobs_num,
             sampling_tensors,
-            sampling_params,
+        )
+
+    def slice(
+        self,
+        index: int,
+        vocab_size: int,
+    ):
+        frequency_penalty = float(self.sampling_tensors.frequency_penalties[index])
+        presence_penalty = float(self.sampling_tensors.presence_penalties[index])
+        repetition_penalty = float(self.sampling_tensors.repetition_penalties[index])
+
+        apply_penalty |= (
+            abs(presence_penalty) >= SAMPLING_EPS
+            or abs(frequency_penalty) >= SAMPLING_EPS
+            or abs(repetition_penalty - 1.0) >= SAMPLING_EPS
+        )
+
+        has_random = bool(self.sampling_tensors.mask_random[index])
+        has_greedy = not has_random
+
+        do_top_p = self.sampling_tensors.top_ps[index] < 1.0 - SAMPLING_EPS
+        do_top_k = self.sampling_tensors.top_ks[index] != vocab_size
+        apply_top_p_top_k = do_top_p | do_top_k
+
+        # Apply always even if there is dummy data
+        apply_bias = True
+        has_logprob = True
+
+        logprob_batch_indices = [0]
+        top_logprobs_num = self.top_logprobs_num[index]
+
+        sampling_tensors = SamplingTensors(
+            mask_random=self.sampling_tensors.mask_random[index],
+            mask_greedy=self.sampling_tensors.mask_greedy[index],
+            mask_top_logprob=self.sampling_tensors.mask_top_logprob[:, index],
+            temperatures=self.sampling_tensors.temperatures[index],
+            top_ps=self.sampling_tensors.top_ps[index],
+            top_ks=self.sampling_tensors.top_ks[index],
+            frequency_penalties=self.sampling_tensors.frequency_penalties[index],
+            presence_penalties=self.sampling_tensors.presence_penalties[index],
+            repetition_penalties=self.sampling_tensors.repetition_penalties[index],
+            logit_bias_indices=self.sampling_tensors.logit_bias_indices[index, :],
+            logit_bias_values=self.sampling_tensors.logit_bias_values[index, :],
+            past_output_tokens=self.sampling_tensors.past_output_tokens[index, :],
+
+        )
+
+        return SamplingState(
+            has_random,
+            has_greedy,
+            apply_top_p_top_k,
+            apply_penalty,
+            apply_bias,
+            has_logprob,
+            logprob_batch_indices,
+            top_logprobs_num,
+            sampling_tensors,
         )
 
 
@@ -499,8 +560,7 @@ def sample(
         top_logprobs = all_top_logprobs[mask]
         for idx, batch_idx in enumerate(sampling_metadata.logprob_batch_indices):
             next_token = next_tokens[batch_idx]
-            assert sampling_metadata.sampling_params[batch_idx].logprobs
-            top_k = sampling_metadata.sampling_params[batch_idx].top_logprobs
+            top_k = sampling_metadata.top_logprobs[idx]
             logprob_infos[batch_idx] = RawLogprobsInfo(
                 current_token_id=next_token,
                 current_logprob=logprobs[batch_idx][next_token],

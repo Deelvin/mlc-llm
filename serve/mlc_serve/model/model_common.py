@@ -129,19 +129,9 @@ def sample_from_logits(
         for i in range(batch_size):
             sequence_id = sequence_ids[i]
             logits_per_token = logits[i]
-            sampling_param = sampling_metadata.sampling_params[i]
-            past_decode_tokens_per_request = past_decode_tokens[i]
-            # NOTE: Rerun the preparation for simplicity.
-            # Assume this code path is taken rarely and the recomputation overhead is
-            # marginal.
+            # TODO(vvchernov): do we need GPU for it?
             with torch.cuda.stream(copy_stream):
-                new_sampling_metadata = SamplingState.from_sampling_params(
-                    [sampling_param],
-                    [past_decode_tokens_per_request],
-                    torch_dtype,
-                    torch_dev,
-                    vocab_size,
-                )
+                new_sampling_metadata = sampling_metadata.slice(i, vocab_size)
             torch.cuda.current_stream().wait_stream(copy_stream)
             maybe_sampling_output: Optional[SamplingOutput] = sample(
                 torch.unsqueeze(logits_per_token, 0),
