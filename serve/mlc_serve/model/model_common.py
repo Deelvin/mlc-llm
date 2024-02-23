@@ -320,7 +320,7 @@ def append_text_gen_res(
 
 
 def sample_from_logits(
-    logits: Union[tvm.nd.NDArray, torch.Tensor],
+    logits,  #: Union[tvm.nd.NDArray, torch.Tensor],
     sequence_ids: List[SequenceId],
     requests: RequestsType,
     vocab_size,
