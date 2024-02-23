@@ -357,17 +357,6 @@ class Model:
             all_token_ids.append(request.token_ids)
             sampling_params.append(request.sampling_params)
 
-        # Prepare sampling tensors in another stream to overlap
-        # CPU<->GPU data transfer with GPU computation in forward pass.
-        with torch.cuda.stream(self._copy_stream):
-            sampling_metadata = SamplingState.from_sampling_params(
-                sampling_params,
-                past_decode_tokens,
-                self.torch_dtype,
-                self.torch_dev,
-                self.vocab_size,
-            )
-
         (
             input_ids,
             positions,
@@ -433,6 +422,17 @@ class Model:
                 slot_mapping,
                 block_tables,
                 self.params,
+            )
+
+        # Prepare sampling tensors in another stream to overlap
+        # CPU<->GPU data transfer with GPU computation in forward pass.
+        with torch.cuda.stream(self._copy_stream):
+            sampling_metadata = SamplingState.from_sampling_params(
+                sampling_params,
+                past_decode_tokens,
+                self.torch_dtype,
+                self.torch_dev,
+                self.vocab_size,
             )
 
         if self.disco_session:
