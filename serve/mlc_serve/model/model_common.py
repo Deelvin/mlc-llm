@@ -279,6 +279,7 @@ def sample(
     return res, check_logprob_infos(logprob_infos)
 """
 
+
 def update_tokens_frequency(
     request: RequestType,
     new_token: int

@@ -315,7 +315,7 @@ class Model:
 
     def generate(
         self,
-        requests: Sequence[Union[PrefillRequest, DecodeRequest, EvalMultiQueryRequest]],
+        requests: RequestsType,
         cache: KVCacheInfo,
     ) -> List[TextGenerationResult]:
         if len(requests) == 0:
