@@ -21,11 +21,7 @@ from .base import (
     ScopedInferenceEngine,
     SequenceOutput,
 )
-from .engine_common import (
-    get_new_request_state,
-    update_sequence,
-    logprobs_detokenize
-)
+from .engine_common import get_new_request_state, prepare_output
 from .model_module import ModelModule, TokenizerModule
 from .staging_engine_worker import (
     AddRequestsCommand,
@@ -224,15 +220,17 @@ class StagingInferenceEngine(ScopedInferenceEngine):
                     new_token_ids = seq_output.new_tokens
 
                     if new_token_ids:
-                        delta = update_sequence(
+                        delta, logprob_info = prepare_output(
                             gen_seq,
                             new_token_ids,
                             state.prompt_token_ids,
+                            seq_output.logprob_info,
                             self.tokenizer,
                             state.stopping_criteria,
                         )
                     else:
                         delta = None
+                        logprob_info = None
 
                     if not state.is_prefilled:
                         # Successfully completed a prefill request
@@ -252,7 +250,7 @@ class StagingInferenceEngine(ScopedInferenceEngine):
                         delta,
                         finish_reason,
                         num_generated_tokens=len(gen_seq.generated_token_ids),
-                        logprob_info=logprobs_detokenize(self.tokenizer, seq_output.logprob_info),
+                        logprob_info=logprob_info,
                     )
 
                     seq_outputs[request_id].append(output)
