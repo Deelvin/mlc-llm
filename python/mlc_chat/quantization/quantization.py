@@ -5,6 +5,7 @@ from .awq_quantization import AWQQuantize
 from .ft_quantization import FTQuantize
 from .group_quantization import GroupQuantize
 from .no_quantization import NoQuantize
+from .smooth_quantization import SmoothQuantize
 
 Quantization = Any
 """Quantization is an object that represents an quantization algorithm. It is required to
@@ -114,6 +115,27 @@ QUANTIZATION: Dict[str, Quantization] = {
         name="q4f16_ft",
         kind="ft-quant",
         quantize_dtype="int4",
+        storage_dtype="int8",
+        model_dtype="float16",
+    ),
+    "smq_q8i8f16_0": SmoothQuantize(
+        name="smq_q8i8f16_0",
+        kind="smoothquant",
+        quantize_dtype="int8",
+        storage_dtype="int8",
+        model_dtype="float16",
+    ),
+    "smq_q8i8f16_1": SmoothQuantize(
+        name="smq_q8i8f16_1",
+        kind="smoothquant",
+        quantize_dtype="int8",
+        storage_dtype="int8",
+        model_dtype="float16",
+    ),
+    "smq_q8i8f16_2": SmoothQuantize(
+        name="smq_q8i8f16_2",
+        kind="smoothquant",
+        quantize_dtype="int8",
         storage_dtype="int8",
         model_dtype="float16",
     ),

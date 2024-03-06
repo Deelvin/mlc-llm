@@ -135,8 +135,8 @@ def detect_model_type(model_type: str, config: Path) -> "Model":
         The model type.
     """
 
-    from mlc_chat.model import MODELS  # pylint: disable=import-outside-toplevel
-
+    # from mlc_chat.model import MODELS  # pylint: disable=import-outside-toplevel
+    from slm.model.model import MODELS
     if model_type == "auto":
         with open(config, "r", encoding="utf-8") as config_file:
             cfg = json.load(config_file)
@@ -178,11 +178,11 @@ def detect_quantization(quantization_arg: str, config: Path) -> "Quantization":
         QUANTIZATION,
     )
 
-    with open(config, "r", encoding="utf-8") as config_file:
-        cfg = json.load(config_file)
     if quantization_arg is not None:
         quantization = QUANTIZATION[quantization_arg]
     elif "quantization" in cfg:
+        with open(config, "r", encoding="utf-8") as config_file:
+            cfg = json.load(config_file)
         quantization = QUANTIZATION[cfg["quantization"]]
     else:
         raise ValueError(
