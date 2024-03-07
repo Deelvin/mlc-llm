@@ -17,8 +17,8 @@ import mlc_llm
 # from mlc_llm import utils
 # # from mlc_llm.utils import load_params, get_model_names
 # from mlc_llm.relax_model import llama, llama_batched_vllm
-from .smoothquant import SCALE_PREFIX_NAME, ZP_PREFIX_NAME
-from .smoothquant import SmoothQuantAnnotator, SmoothQuantStatCollector
+from mlc_llm.transform.smoothquant import get_scale_param_name, get_zp_param_name, SMOOTH_SUFFIX_NAME, CALIBRATE_SUFFIX_NAME
+from mlc_llm.transform.smoothquant import SmoothQuantAnnotator, SmoothQuantStatCollector
 
 # List of supported calibration datasets.
 dataset_list = ["dummy", "piqa", "gsm8k"]
@@ -133,25 +133,15 @@ def _calculate_scale_params(
     assert len(a_stat) == len(w_stat)
     idx = 0
     scale_params = {}
-    # print("-------------------------")
-    # print(len(a_stat), len(w_stat), alpha)
     for a_element, w_element in zip(a_stat, w_stat):
         assert a_element.shape == w_element.shape
         assert len(a_element.shape) == 1
-        # print("a_element", a_element.shape)
-        # print("a_element", a_element)
-        # print("w_element", w_element.shape)
-        # print("w_element", w_element)
         scales = np.power(np.abs(a_element), alpha) / np.power(np.abs(w_element), 1 - alpha)
         if scales.size - np.count_nonzero(scales) > 0:
             print("Warning: Smoothing: scales have zero value")
             scales = np.where(scales == 0.0, 1.0, scales)
-            #scales = np.ones_like(scales)
-            #assert False, "Not supported case: please, add more elements in dataset. Otherwise, NaNs in output are possible."
-        
-        scale_params[f"sq_scale_{idx}"] = tvm.nd.array(scales, dev)
-        scale_params[f"sq_scale_{idx+1}"] = tvm.nd.array(scales, dev)
-        # print("scales", scales)
+        scale_params[get_scale_param_name(idx, SMOOTH_SUFFIX_NAME)] = tvm.nd.array(scales, dev)
+        scale_params[get_scale_param_name(idx+1, SMOOTH_SUFFIX_NAME)] = tvm.nd.array(scales, dev)
         idx += 2
 
     return scale_params
@@ -228,12 +218,12 @@ def _calculate_quantization_params(
     qparams = {}
     for a_max_element, a_min_element, w_max_element, w_min_element in zip(*stats[func_name]):
         a_scale, a_zp = _calculate_scale_zp(a_max_element, a_min_element, a_dtype, a_qscheme)
-        qparams[f"{SCALE_PREFIX_NAME}{idx}"] = tvm.nd.array(a_scale, tvm.cpu(0))
-        qparams[f"{ZP_PREFIX_NAME}{idx+2}"] = tvm.nd.array(a_zp, tvm.cpu(0))
+        qparams[get_scale_param_name(idx, SMOOTH_SUFFIX_NAME)] = tvm.nd.array(a_scale, tvm.cpu(0))
+        qparams[get_zp_param_name(idx+2)] = tvm.nd.array(a_zp, tvm.cpu(0))
 
         w_scale, w_zp = _calculate_scale_zp(w_max_element, w_min_element, w_dtype, w_qscheme)
-        qparams[f"{SCALE_PREFIX_NAME}{idx+1}"] = tvm.nd.array(w_scale, tvm.cpu(0))
-        qparams[f"{ZP_PREFIX_NAME}{idx+3}"] = tvm.nd.array(w_zp, tvm.cpu(0))
+        qparams[get_scale_param_name(idx+1, SMOOTH_SUFFIX_NAME)] = tvm.nd.array(w_scale, tvm.cpu(0))
+        qparams[get_zp_param_name(idx+3)] = tvm.nd.array(w_zp, tvm.cpu(0))
         idx += 4
 
     return qparams

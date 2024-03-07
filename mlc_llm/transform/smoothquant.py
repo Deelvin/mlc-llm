@@ -19,6 +19,9 @@ OPMODES = ("smoothing", *QSCHEMES)
 
 SCALE_PREFIX_NAME = "sq_scale_"
 ZP_PREFIX_NAME = "sq_zp_"
+SMOOTH_SUFFIX_NAME = "smooth"
+CALIBRATE_SUFFIX_NAME = "calibrate"
+ZP_PREFIX_NAME = "sq_zp_"
 
 def _try_convert_to_scalar_const(expr: tvm.relax.Expr) -> Union[tvm.relax.Expr, float, int]:
     if isinstance(expr, tvm.relax.Constant):
@@ -35,6 +38,11 @@ class QKind(Enum):
     KIND_ACT = 1,
     KIND_WEIGHTS = 2,
 
+def get_scale_param_name(counter, suffix):
+    return f"{SCALE_PREFIX_NAME}{counter}_{suffix}"
+
+def get_zp_param_name(counter):
+    return f"{ZP_PREFIX_NAME}{counter}"
 
 @mutator
 class Annotator(PyExprMutator):
@@ -60,7 +68,7 @@ class Annotator(PyExprMutator):
             self.builder_.update_func(gv, updated_func)
 
         return self.builder_.get()
-    
+
     def visit_function_(self, f):
         body = super().visit_expr(f.body)
         params = list(f.params) + list(self.new_params)
@@ -89,7 +97,7 @@ class Annotator(PyExprMutator):
             self.new_params.append(param)
             return param
 
-        def _make_scale_param(shape: relax.ShapeExpr, dtype: str, kind: QKind) -> tvm.relax.Var:
+        def _make_scale_param(shape: relax.ShapeExpr, dtype: str, kind: QKind, suffix: str) -> tvm.relax.Var:
             """
             Create scale parameter.
 
@@ -106,15 +114,16 @@ class Annotator(PyExprMutator):
             if kind == QKind.KIND_WEIGHTS and self.op_mode.startswith("smq_q8i8"):
                 axis = -2
             n = shape[axis]
-            scale = _make_param(f"{SCALE_PREFIX_NAME}{self.sm_counter}", shape=[n], dtype=dtype)
+            scale = _make_param(get_scale_param_name(self.sm_counter, suffix), shape=[n], dtype=dtype)
             return scale, axis
 
         def _make_zero_point_param(shape: relax.ShapeExpr, dtype: str) -> tvm.relax.Var:
-            return _make_param(f"{ZP_PREFIX_NAME}{self.sm_counter}", shape=shape, dtype=dtype)
+            return _make_param(get_zp_param_name(self.sm_counter), shape=shape, dtype=dtype)
 
-        a_scale, a_axis = _make_scale_param(act.struct_info.shape, act.struct_info.dtype, kind=QKind.KIND_ACT)
-        w_scale, w_axis = _make_scale_param(weights.struct_info.shape, weights.struct_info.dtype, kind=QKind.KIND_WEIGHTS)
         if self.op_mode.startswith("smq_q8i8"):
+            a_scale, a_axis = _make_scale_param(act.struct_info.shape, act.struct_info.dtype, kind=QKind.KIND_ACT, suffix=CALIBRATE_SUFFIX_NAME)
+            w_scale, w_axis = _make_scale_param(weights.struct_info.shape, weights.struct_info.dtype, kind=QKind.KIND_WEIGHTS, suffix=CALIBRATE_SUFFIX_NAME)
+
             a_zp = _make_zero_point_param(a_scale.struct_info.shape, dtype="int8")
             w_zp = _make_zero_point_param(w_scale.struct_info.shape, dtype="int8")
             qa = R.quantize(act, a_scale, a_zp, axis=a_axis, out_dtype="int8")
@@ -122,6 +131,8 @@ class Annotator(PyExprMutator):
             qw = R.quantize(weights, w_scale, w_zp, axis=w_axis, out_dtype="int8")
             rhs = R.dequantize(qw, w_scale, w_zp, axis=w_axis, out_dtype=weights.struct_info.dtype)
         else:
+            a_scale, a_axis = _make_scale_param(act.struct_info.shape, act.struct_info.dtype, kind=QKind.KIND_ACT, suffix=SMOOTH_SUFFIX_NAME)
+            w_scale, w_axis = _make_scale_param(weights.struct_info.shape, weights.struct_info.dtype, kind=QKind.KIND_WEIGHTS, suffix=SMOOTH_SUFFIX_NAME)
             lhs = R.divide(act, a_scale)
             rhs = R.multiply(weights, w_scale)
         return R.linear(lhs, rhs)
@@ -188,7 +199,7 @@ class SmoothQuantStatCollector:
                 )
                 self.permute = is_op("relax.permute_dims")(self.rhs_sm)
                 self.pattern = is_op("relax.matmul")(self.lhs_sm, self.permute)
-            
+
             def transform(self) -> tvm.IRModule:
                 for gv, func in self.mod.functions.items():
                     if not isinstance(func, relax.Function):
@@ -200,7 +211,7 @@ class SmoothQuantStatCollector:
                     updated_func = remove_all_unused(updated_func)
                     self.builder_.update_func(gv, updated_func)
                 return self.builder_.get()
-            
+
             def visit_function_(self, f):
                 body = super().visit_expr(f.body)
                 new_params = [param for param in f.params if param not in self.params_to_remove]
