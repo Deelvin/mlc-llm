@@ -19,8 +19,8 @@ OPMODES = ("smoothing", *QSCHEMES)
 
 SCALE_PREFIX_NAME = "sq_scale_"
 ZP_PREFIX_NAME = "sq_zp_"
-SMOOTH_SUFFIX_NAME = "smooth"
-CALIBRATE_SUFFIX_NAME = "calibrate"
+SMOOTH_SUFFIX_NAME = ""
+CALIBRATE_SUFFIX_NAME = ""
 ZP_PREFIX_NAME = "sq_zp_"
 
 def _try_convert_to_scalar_const(expr: tvm.relax.Expr) -> Union[tvm.relax.Expr, float, int]:
