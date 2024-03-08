@@ -218,11 +218,11 @@ def _calculate_quantization_params(
     qparams = {}
     for a_max_element, a_min_element, w_max_element, w_min_element in zip(*stats[func_name]):
         a_scale, a_zp = _calculate_scale_zp(a_max_element, a_min_element, a_dtype, a_qscheme)
-        qparams[get_scale_param_name(idx, SMOOTH_SUFFIX_NAME)] = tvm.nd.array(a_scale, tvm.cpu(0))
+        qparams[get_scale_param_name(idx, CALIBRATE_SUFFIX_NAME)] = tvm.nd.array(a_scale, tvm.cpu(0))
         qparams[get_zp_param_name(idx+2)] = tvm.nd.array(a_zp, tvm.cpu(0))
 
         w_scale, w_zp = _calculate_scale_zp(w_max_element, w_min_element, w_dtype, w_qscheme)
-        qparams[get_scale_param_name(idx+1, SMOOTH_SUFFIX_NAME)] = tvm.nd.array(w_scale, tvm.cpu(0))
+        qparams[get_scale_param_name(idx+1, CALIBRATE_SUFFIX_NAME)] = tvm.nd.array(w_scale, tvm.cpu(0))
         qparams[get_zp_param_name(idx+3)] = tvm.nd.array(w_zp, tvm.cpu(0))
         idx += 4
 
@@ -253,18 +253,18 @@ def _smooth(
 ):
     print(type(mod))
     mod = SmoothQuantAnnotator()(mod)
-    print("---------------_smooth calibrate mod ----------------")
-    print(mod)
+    # print("---------------_smooth calibrate mod ----------------")
+    # print(mod)
 
     stat_mod = SmoothQuantStatCollector()(mod)
-    print("---------------_smooth stat mod ----------------")
-    print(stat_mod)
+    # print("---------------_smooth stat mod ----------------")
+    # print(stat_mod)
 
     stat_mod = mlc_llm.transform.FuseTransposeMatmul()(stat_mod)
-    print("---------------_transf stat mod ----------------")
-    print(stat_mod)
+    # print("---------------_transf stat mod ----------------")
+    # print(stat_mod)
 
-    print("---------------------------------------")
+    # print("---------------------------------------")
     # exit(0)
     # funcs = ['prefill']
     print("module_names", module_names)
