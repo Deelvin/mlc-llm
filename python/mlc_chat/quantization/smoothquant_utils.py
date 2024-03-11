@@ -70,7 +70,8 @@ def _accumulate_outlier_stat(stat, data, func: Callable = np.maximum):
         assert len(data) == len(stat)
         for idx in range(len(stat)):
             array = data[idx].numpy().astype(np.float32)
-            stat[idx] = func(stat[idx], array)
+            # stat[idx] = func(stat[idx], array)
+            stat[idx] = func(stat[idx], data[idx].numpy())
     return stat
 
 

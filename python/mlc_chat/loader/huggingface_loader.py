@@ -98,7 +98,7 @@ class HuggingFaceLoader:  # pylint: disable=too-few-public-methods
         check_parameter_usage(extern_param_map, set(self.torch_to_path.keys()))
 
     def load(
-        self, device: Device, preshard_funcs: Dict[str, Callable] = None
+        self, device: Device, preshard_funcs: Dict[str, Callable] = None, preprocess_funcs: Dict[str, Callable] = None
     ) -> Iterator[Tuple[str, NDArray]]:
         """Load the parameters and yield the MLC parameter and its value.
 
@@ -115,8 +115,11 @@ class HuggingFaceLoader:  # pylint: disable=too-few-public-methods
         mlc_names = _loading_order(self.extern_param_map, self.torch_to_path)
         for mlc_name in tqdm(mlc_names):
             param = self._load_mlc_param(mlc_name, device=device)
+            if mlc_name in preprocess_funcs:
+                param = preprocess_funcs[mlc_name](param)
             if preshard_funcs is not None and mlc_name in preshard_funcs:
                 sharded_params = preshard_funcs[mlc_name](param)
+                #print(mlc_name, param.shape, sharded_params)
                 for i, sharded_param in enumerate(sharded_params):
                     sharded_name = _sharded_param_name(mlc_name, i)
                     yield from self._load_or_quantize(sharded_name, sharded_param, device)

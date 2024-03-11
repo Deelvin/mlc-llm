@@ -124,3 +124,84 @@ def apply_preshard(
     for name in param_to_shard_func:
         param_to_shard_func[name] = vm[param_to_shard_func[name]]
     return param_to_shard_func
+
+
+def load_file(path):
+    import json
+    with open(path, 'r') as f:
+        loaded_dict = json.load(f)
+    return loaded_dict
+
+
+def _create_preprocess_func(
+    bb: relax.BlockBuilder, param: nn.Parameter, func_name: str, tensor_parallel_shards: int, **smq_params
+):
+    weight_shape = param.shape
+    shard_strategy = param.attrs.get("shard_strategy", None)
+    if shard_strategy is not None:
+        weight_shape[shard_strategy.dim] = weight_shape[shard_strategy.dim] * tensor_parallel_shards
+    #print(f"param.shape={param.shape} shard_strategy.dim={shard_strategy.dim}")
+    weight_var = relax.Var("weight", relax.TensorStructInfo(weight_shape, param.dtype))
+    with bb.function(name=func_name, params=[weight_var]):
+        with bb.dataflow():
+            smoothing_factor = smq_params.get("smoothing_factor")
+            if smoothing_factor:
+                weight_var = bb.emit(relax.op.multiply(weight_var, relax.const(smoothing_factor)))
+            scale = smq_params.get("scale")
+            zp = smq_params.get("zp")
+            if scale and zp:
+                weight_var = bb.emit(relax.op.quantize(weight_var, relax.const(scale), relax.const(zp), axis=-2, out_dtype="int8"))
+            gv = bb.emit_output(weight_var)
+        bb.emit_func_output(gv)
+
+
+def gen_preprocess(
+    quantize_map: Any,
+    named_params: Dict[str, nn.Parameter],
+    tensor_parallel_shards: int,
+    args: Any,
+):
+    model_config = args.model.config.from_file(args.config)
+    model_config.tensor_parallel_shards = tensor_parallel_shards
+    model = args.model.model(model_config)
+    model.to(args.quantization.model_dtype)
+
+    param_to_smooth_factor = load_file(path="/opt/dlami/nvme/ibsidorenko/MLCServe/deelvin-mlc-serve/dist/test_dumps/smooth_scale2param.json")
+    param_to_scale = load_file(path="/opt/dlami/nvme/ibsidorenko/MLCServe/deelvin-mlc-serve/dist/test_dumps/quantize_scale2param.json")
+    import tvm
+    from tvm.contrib import tvmjs
+    smoothing_factors_dict, _ = tvmjs.load_ndarray_cache("/opt/scratch/ibsidorenko/MLCServe/deelvin-mlc-serve/dist/smoothquant/smooth/", tvm.cpu())
+    scales_dict, _ = tvmjs.load_ndarray_cache("/opt/scratch/ibsidorenko/MLCServe/deelvin-mlc-serve/dist/smoothquant/quantize/", tvm.cpu())
+
+    bb = relax.BlockBuilder()
+    param_to_preprocess_func = {}
+    for idx, (name, param) in enumerate(model.state_dict().items()):
+        shard_strategy = param.attrs.get("shard_strategy", None)
+        smooth_factor_names = param_to_smooth_factor["prefill"].get(name)
+        scale_names = param_to_scale["prefill"].get(name)
+        if smooth_factor_names is not None and scale_names is not None:
+            _, smooth_factor_name = smooth_factor_names
+            _, scale_name, _, zp_name = scale_names
+            func_name = f"convert_param_{idx}"
+            _create_preprocess_func(
+                bb,
+                param,
+                func_name,
+                tensor_parallel_shards,
+                smoothing_factor=smoothing_factors_dict[smooth_factor_name],
+                scale=scales_dict[scale_name],
+                zp=scales_dict[zp_name],
+            )
+            param_to_preprocess_func[name] = func_name
+            param_to_smooth_factor["prefill"].pop(name)
+            param_to_scale["prefill"].pop(name)
+
+    assert not param_to_smooth_factor["prefill"], "detected not processed smoothing factors"
+    assert not param_to_scale["prefill"], "detected not processed scales/zero_points"
+
+    mod = bb.finalize()
+    vm = _compile_shard_funcs(mod, args.device)
+
+    for name in param_to_preprocess_func:
+        param_to_preprocess_func[name] = vm[param_to_preprocess_func[name]]
+    return param_to_preprocess_func
