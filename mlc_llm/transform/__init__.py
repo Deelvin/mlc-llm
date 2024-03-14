@@ -12,4 +12,6 @@ from .smoothquant import (
     SmoothQuantAnnotator,
     SmoothQuantStatCollector,
     SmoothQuantStopLiftParamsOptimizer,
+    SmoothQuantBundleModelParams,
+    SmoothQuantParamsMutator,
 )

@@ -1,9 +1,12 @@
 """Functions for pre-sharding weights"""
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
+from collections import OrderedDict
+import numpy as np
 
 from tvm import IRModule
 from tvm import dlight as dl
 from tvm import relax
+from tvm import nd
 from tvm.relax.frontend import nn
 from tvm.runtime import Device
 from tvm.target import Target
@@ -133,68 +136,149 @@ def load_file(path):
     return loaded_dict
 
 
-def _create_preprocess_func(
-    bb: relax.BlockBuilder, param: nn.Parameter, func_name: str, tensor_parallel_shards: int, **smq_params
-):
-    weight_shape = param.shape
-    shard_strategy = param.attrs.get("shard_strategy", None)
-    if shard_strategy is not None:
-        weight_shape[shard_strategy.dim] = weight_shape[shard_strategy.dim] * tensor_parallel_shards
-    #print(f"param.shape={param.shape} shard_strategy.dim={shard_strategy.dim}")
-    weight_var = relax.Var("weight", relax.TensorStructInfo(weight_shape, param.dtype))
-    with bb.function(name=func_name, params=[weight_var]):
-        with bb.dataflow():
-            smoothing_factor = smq_params.get("smoothing_factor")
-            if smoothing_factor:
-                weight_var = bb.emit(relax.op.multiply(weight_var, relax.const(smoothing_factor)))
-            scale = smq_params.get("scale")
-            zp = smq_params.get("zp")
-            if scale and zp:
-                weight_var = bb.emit(relax.op.quantize(weight_var, relax.const(scale), relax.const(zp), axis=-2, out_dtype="int8"))
-            gv = bb.emit_output(weight_var)
-        bb.emit_func_output(gv)
+def _split_array(arr, num: int):
+    return np.split(arr.numpy(), num) if arr is not None else [None] * num
+
+def _duplicate_array(arr, num: int):
+    return [np.copy(arr.numpy()) for _ in range(num)] if arr is not None else [None] * num
 
 
-def gen_preprocess(
-    quantize_map: Any,
-    named_params: Dict[str, nn.Parameter],
-    tensor_parallel_shards: int,
-    args: Any,
-):
+def load_smoothquant_params(tensor_parallel_shards, args):
     model_config = args.model.config.from_file(args.config)
     model_config.tensor_parallel_shards = tensor_parallel_shards
     model = args.model.model(model_config)
     model.to(args.quantization.model_dtype)
 
-    param_to_smooth_factor = load_file(path="/opt/dlami/nvme/ibsidorenko/MLCServe/deelvin-mlc-serve/dist/test_dumps/smooth_scale2param.json")
-    param_to_scale = load_file(path="/opt/dlami/nvme/ibsidorenko/MLCServe/deelvin-mlc-serve/dist/test_dumps/quantize_scale2param.json")
+    param_to_smooth_factor = load_file(path="/opt/scratch/ibsidorenko/MLCServe/4commit/dist/SMQ/smooth_scale2param.json")
+    param_to_scale = load_file(path="/opt/scratch/ibsidorenko/MLCServe/4commit/dist/SMQ/quantize_scale2param.json")
     import tvm
     from tvm.contrib import tvmjs
-    smoothing_factors_dict, _ = tvmjs.load_ndarray_cache("/opt/scratch/ibsidorenko/MLCServe/deelvin-mlc-serve/dist/smoothquant/smooth/", tvm.cpu())
-    scales_dict, _ = tvmjs.load_ndarray_cache("/opt/scratch/ibsidorenko/MLCServe/deelvin-mlc-serve/dist/smoothquant/quantize/", tvm.cpu())
+    smoothing_factors_dict, _ = tvmjs.load_ndarray_cache("/opt/scratch/ibsidorenko/MLCServe/4commit/dist/SMQ/smoothquant/smooth/", tvm.cpu())
+    scales_dict, _ = tvmjs.load_ndarray_cache("/opt/scratch/ibsidorenko/MLCServe/4commit/dist/SMQ/smoothquant/quantize/", tvm.cpu())
+
+    out = OrderedDict()
+    for name, param in model.state_dict().items():
+        smooth_factor_names = param_to_smooth_factor["prefill"].pop(name, None)
+        scale_names = param_to_scale["prefill"].pop(name, None)
+        shard_strategy = param.attrs.get("shard_strategy", None)
+        if smooth_factor_names is not None and scale_names is not None:
+            a_factor, w_factor = smooth_factor_names
+            a_scale, w_scale, a_zp, w_zp = scale_names
+            if shard_strategy is not None:
+                if shard_strategy.dim == 0:
+                    a_factors = _duplicate_array(smoothing_factors_dict[a_factor], tensor_parallel_shards)
+                    w_factors = _duplicate_array(smoothing_factors_dict[w_factor], tensor_parallel_shards)
+                    a_scales =  _duplicate_array(scales_dict[a_scale], tensor_parallel_shards)
+                    w_scales =  _split_array(scales_dict[w_scale], tensor_parallel_shards)
+                    a_zps =     _duplicate_array(scales_dict[a_zp], tensor_parallel_shards)
+                    w_zps =     _split_array(scales_dict[w_zp], tensor_parallel_shards)
+                else:
+                    assert shard_strategy.dim == 1, f"Not supported shard.dim={shard_strategy.dim}"
+                    a_factors = _split_array(smoothing_factors_dict[a_factor], tensor_parallel_shards)
+                    w_factors = _split_array(smoothing_factors_dict[w_factor], tensor_parallel_shards)
+                    a_scales =  _split_array(scales_dict[a_scale], tensor_parallel_shards)
+                    w_scales =  _duplicate_array(scales_dict[w_scale], tensor_parallel_shards)
+                    a_zps =     _split_array(scales_dict[a_zp], tensor_parallel_shards)
+                    w_zps =     _duplicate_array(scales_dict[w_zp], tensor_parallel_shards)
+                for shard_idx in range(tensor_parallel_shards):
+                    out[_sharded_param_name(a_factor, shard_idx)] = a_factors[shard_idx]
+                    out[_sharded_param_name(w_factor, shard_idx)] = w_factors[shard_idx]
+                    out[_sharded_param_name(a_scale, shard_idx)] = a_scales[shard_idx]
+                    out[_sharded_param_name(w_scale, shard_idx)] = w_scales[shard_idx]
+                    out[_sharded_param_name(a_zp, shard_idx)] = a_zps[shard_idx]
+                    out[_sharded_param_name(w_zp, shard_idx)] = w_zps[shard_idx]
+            else:
+                out[a_factor] = smoothing_factors_dict[a_factor]
+                out[w_factor] = smoothing_factors_dict[w_factor]
+                out[a_scale]  = scales_dict[a_scale]
+                out[w_scale]  = scales_dict[w_scale]
+                out[a_zp]  = scales_dict[a_zp]
+                out[w_zp]  = scales_dict[w_zp]
+    return out
+
+
+
+def _create_smoothquant_func(
+    bb: relax.BlockBuilder, param: nn.Parameter, param_name: str, idx: int, tensor_parallel_shards: int, **smq_params
+):
+    def _create_func(
+        func_name: str,
+        bb: relax.BlockBuilder,
+        param: nn.Parameter,
+        smoothing_factor: Union[np.ndarray, nd.NDArray],
+        scale: Union[np.ndarray, nd.NDArray],
+        zp: Union[np.ndarray, nd.NDArray],
+    ):
+        weight_var = relax.Var("weight", relax.TensorStructInfo(param.shape, param.dtype))
+        with bb.function(name=func_name, params=[weight_var]):
+            with bb.dataflow():
+                if smoothing_factor is not None:
+                    weight_var = bb.emit(relax.op.multiply(weight_var, relax.const(smoothing_factor)))
+                if scale is not None and zp is not None:
+                    weight_var = bb.emit(relax.op.quantize(weight_var, relax.const(scale), relax.const(zp), axis=-2, out_dtype="int8"))
+                gv = bb.emit_output(weight_var)
+            bb.emit_func_output(gv)
+
+    func_names = []
+    shard_strategy = param.attrs.get("shard_strategy", None)
+    factor_param = smq_params.get("smoothing_factor")
+    scale_param = smq_params.get("scale")
+    zp_param = smq_params.get("zp")
+    if tensor_parallel_shards == 1 or shard_strategy is None:
+        func_name = f"convert_param_{idx}"
+        func_names.append((param_name, func_name))
+        _create_func(func_name, bb, param, factor_param, scale_param, zp_param)
+    else:
+        if shard_strategy.dim == 0:
+            factors = _duplicate_array(factor_param, tensor_parallel_shards)
+            scales =  _split_array(scale_param, tensor_parallel_shards)
+            zps =     _split_array(zp_param, tensor_parallel_shards)
+        else:
+            assert shard_strategy.dim == 1, f"Not supported shard.dim={shard_strategy.dim}"
+            factors = _split_array(factor_param, tensor_parallel_shards)
+            scales =  _duplicate_array(scale_param, tensor_parallel_shards)
+            zps =     _duplicate_array(zp_param, tensor_parallel_shards)
+        for shard_idx in range(tensor_parallel_shards):
+            func_name = f"convert_param_{idx}_shard_{shard_idx}"
+            func_names.append((_sharded_param_name(param_name, shard_idx), func_name))
+            _create_func(func_name, bb, param, factors[shard_idx], scales[shard_idx], zps[shard_idx])
+    return func_names
+
+
+def gen_smoothquant(named_params: Dict[str, nn.Parameter], tensor_parallel_shards: int, args: Any):
+    model_config = args.model.config.from_file(args.config)
+    model_config.tensor_parallel_shards = tensor_parallel_shards
+    model = args.model.model(model_config)
+    model.to(args.quantization.model_dtype)
+
+    param_to_smooth_factor = load_file(path="/opt/scratch/ibsidorenko/MLCServe/4commit/dist/SMQ/smooth_scale2param.json")
+    param_to_scale = load_file(path="/opt/scratch/ibsidorenko/MLCServe/4commit/dist/SMQ//quantize_scale2param.json")
+    import tvm
+    from tvm.contrib import tvmjs
+    smoothing_factors_dict, _ = tvmjs.load_ndarray_cache("/opt/scratch/ibsidorenko/MLCServe/4commit/dist/SMQ/smoothquant/smooth/", tvm.cpu())
+    scales_dict, _ = tvmjs.load_ndarray_cache("/opt/scratch/ibsidorenko/MLCServe/4commit/dist/SMQ/smoothquant/quantize/", tvm.cpu())
 
     bb = relax.BlockBuilder()
-    param_to_preprocess_func = {}
+    param_to_smoothquant_func = {}
     for idx, (name, param) in enumerate(model.state_dict().items()):
-        shard_strategy = param.attrs.get("shard_strategy", None)
-        smooth_factor_names = param_to_smooth_factor["prefill"].get(name)
-        scale_names = param_to_scale["prefill"].get(name)
+        smooth_factor_names = param_to_smooth_factor["prefill"].pop(name, None)
+        scale_names = param_to_scale["prefill"].pop(name, None)
         if smooth_factor_names is not None and scale_names is not None:
             _, smooth_factor_name = smooth_factor_names
             _, scale_name, _, zp_name = scale_names
-            func_name = f"convert_param_{idx}"
-            _create_preprocess_func(
+            func_names = _create_smoothquant_func(
                 bb,
                 param,
-                func_name,
+                name,
+                idx,
                 tensor_parallel_shards,
                 smoothing_factor=smoothing_factors_dict[smooth_factor_name],
                 scale=scales_dict[scale_name],
                 zp=scales_dict[zp_name],
             )
-            param_to_preprocess_func[name] = func_name
-            param_to_smooth_factor["prefill"].pop(name)
-            param_to_scale["prefill"].pop(name)
+            for sharded_param_name, func_name in func_names:
+                param_to_smoothquant_func[sharded_param_name] = func_name
+                named_params[sharded_param_name].to("int8")  # Update dtype for checker
 
     assert not param_to_smooth_factor["prefill"], "detected not processed smoothing factors"
     assert not param_to_scale["prefill"], "detected not processed scales/zero_points"
@@ -202,6 +286,6 @@ def gen_preprocess(
     mod = bb.finalize()
     vm = _compile_shard_funcs(mod, args.device)
 
-    for name in param_to_preprocess_func:
-        param_to_preprocess_func[name] = vm[param_to_preprocess_func[name]]
-    return param_to_preprocess_func
+    for name in param_to_smoothquant_func:
+        param_to_smoothquant_func[name] = vm[param_to_smoothquant_func[name]]
+    return param_to_smoothquant_func

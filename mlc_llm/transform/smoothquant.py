@@ -2,8 +2,8 @@ import numpy as np
 import tvm
 from tvm import relax
 from tvm.relax.analysis import remove_all_unused
-from tvm.relax.dpl import rewrite_call, is_op, wildcard
-from tvm.relax.expr_functor import PyExprMutator, mutator
+from tvm.relax.dpl import rewrite_call, is_op, wildcard, is_tuple_get_item
+from tvm.relax.expr_functor import PyExprMutator, mutator, visitor, PyExprVisitor
 from tvm.script import relax as R
 
 #from ..quantization.smoothquant_utils import (
@@ -449,3 +449,147 @@ class SmoothQuantStopLiftParamsOptimizer:
             return R.linear(matches[self.input], stop, out_dtype=out_dtype)
 
         return rewrite_call(self.pattern, rewriter, func)
+
+
+@tvm.relax.transform.function_pass(opt_level=0, name="SmoothQuantParamsMutator")
+class SmoothQuantParamsMutator:
+    """
+    Transformation pass to substitute param with quantized one and remove the following sequence of
+    operations: R.quantize(R.multiply(...), ...).
+    """
+
+    def __init__(self, dtype):
+        self.new_dtype = dtype
+
+        self.weights = is_tuple_get_item(wildcard())
+        multiply = is_op("relax.multiply")(self.weights, wildcard())
+        quantize = is_op("relax.quantize")(multiply, wildcard(), wildcard())
+        self.pattern = is_op("relax.dequantize")(quantize, wildcard(), wildcard()) | is_tuple_get_item(wildcard())
+
+    def transform_function(self, func, mod: tvm.IRModule, ctx: tvm.transform.PassContext):
+        if not isinstance(func, relax.Function):
+            return func
+
+        @visitor
+        class TupleGetItemVisitor(PyExprVisitor):
+            def __init__(self):
+                self.indexes = set()
+                self.get_item = wildcard()
+                multiply = is_op("relax.multiply")(self.get_item, wildcard())
+                quantize = is_op("relax.quantize")(multiply, wildcard(), wildcard())
+                self.pattern = is_op("relax.dequantize")(quantize, wildcard(), wildcard())
+
+            def collect(self, func):
+                self.var2val = tvm.relax.analysis.get_var2val(func)
+                self.visit_expr(func)
+                return self.indexes
+
+            def visit_call_(self, call: tvm.relax.Call) -> None:
+                matchings = self.pattern.extract_matched_expr(call, self.var2val)
+                if matchings:
+                    tgi = matchings[self.get_item]
+                    assert isinstance(tgi, relax.TupleGetItem)
+                    self.indexes.add(tgi.index)
+                super().visit_call_(call)
+
+
+        indexes = TupleGetItemVisitor().collect(func)
+
+        num_input = int(func.attrs["num_input"])
+        params = func.params[num_input:]
+        sinfo = []
+        for param in params:
+            if isinstance(param.struct_info, relax.TupleStructInfo):
+                self.tuple_name = param.name_hint
+                for idx, field in enumerate(param.struct_info.fields):
+                    dtype = self.new_dtype if idx in indexes else field.dtype
+                    sinfo.append(relax.TensorStructInfo(field.shape, dtype))
+        self.var_param_tuple = relax.Var("packed_params", relax.TupleStructInfo(sinfo))
+
+        def rewriter(expr, matches):
+            op = matches[self.pattern]
+            if isinstance(op, relax.TupleGetItem):
+                if op.index not in indexes and op.tuple_value.name_hint == self.tuple_name:
+                    return relax.TupleGetItem(self.var_param_tuple, op.index)
+                else:
+                    return expr
+            weights = matches[self.weights]
+            dq = op
+            axis = dq.attrs.axis
+            out_dtype = dq.attrs.out_dtype
+            tgi = relax.TupleGetItem(self.var_param_tuple, weights.index)
+            return R.dequantize(tgi, dq.args[1], dq.args[2], axis=axis, out_dtype=out_dtype)
+
+        new_func = rewrite_call(self.pattern, rewriter, func)
+        return relax.Function(
+            params=func.params[:num_input] + [self.var_param_tuple],
+            body=new_func.body,
+            ret_struct_info=new_func.ret_struct_info,
+            is_pure=new_func.is_pure,
+            attrs=new_func.attrs,
+        )
+
+
+@mutator
+class ParamBundler(PyExprMutator):
+    def __init__(self, mod: tvm.IRModule) -> None:
+        super().__init__(mod)
+        self.mod = mod
+        self.var_to_expr = dict()
+
+    def transform(self) -> tvm.IRModule:
+        for gv, func in self.mod.functions.items():
+            if not isinstance(func, relax.Function):
+                continue
+            updated_func = self.visit_expr(func)
+            updated_func = remove_all_unused(updated_func)
+            self.builder_.update_func(gv, updated_func)
+
+        return self.builder_.get()
+
+    def visit_function_(self, f) -> tvm.relax.Function:
+        num_input = int(f.attrs["num_input"])
+        params = f.params[num_input:]
+        sinfo = []
+        for param in params:
+            if isinstance(param.struct_info, relax.TupleStructInfo):
+                sinfo += param.struct_info.fields
+            else:
+                assert isinstance(param.struct_info, relax.TensorStructInfo)
+                sinfo.append(param.struct_info)
+        var_param_tuple = relax.Var("packed_params", relax.TupleStructInfo(sinfo))
+        idx = 0
+        for param in params:
+            if isinstance(param.struct_info, relax.TupleStructInfo):
+                self.var_to_expr[param] = (idx, var_param_tuple)
+                idx += len(param.struct_info.fields)
+            else:
+                assert isinstance(param.struct_info, relax.TensorStructInfo)
+                self.var_to_expr[param] = relax.TupleGetItem(var_param_tuple, idx)
+                idx += 1
+        body = super().visit_expr(f.body)
+        return relax.Function(
+            params=f.params[:num_input] + [var_param_tuple],
+            body=body,
+            ret_struct_info=f.ret_struct_info,
+            is_pure=f.is_pure,
+            attrs=f.attrs,
+            span=f.span,
+        )
+
+    def visit_tuple_getitem_(self, tgi):
+        if tgi.tuple_value in self.var_to_expr:
+            start_idx, var = self.var_to_expr[tgi.tuple_value]
+            return relax.TupleGetItem(var, start_idx + tgi.index)
+        return super().visit_tuple_getitem_(tgi)
+
+    def visit_var_(self, var) -> tvm.relax.Expr:
+        if var in self.var_to_expr:
+            return self.var_to_expr[var]
+        return super().visit_var_(var)
+
+
+@tvm.transform.module_pass(opt_level=0, name="SmoothQuantBundleModelParams")
+class SmoothQuantBundleModelParams:
+    def transform_module(self, mod: tvm.IRModule, ctx: tvm.transform.PassContext) -> tvm.IRModule:
+        return ParamBundler(mod).transform()
