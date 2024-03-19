@@ -20,7 +20,7 @@ OPMODES = ("smoothing", *QSCHEMES)
 SCALE_PREFIX_NAME = "sq_scale_"
 ZP_PREFIX_NAME = "sq_zp_"
 SMOOTH_SUFFIX_NAME = "smooth"
-CALIBRATE_SUFFIX_NAME = "calibrate"
+QUANT_SUFFIX_NAME = "calibrate"
 ZP_PREFIX_NAME = "sq_zp_"
 
 
@@ -133,8 +133,8 @@ class Annotator(PyExprMutator):
             elif self.op_mode.startswith("smq_e5m2"):
                 zpdtype = "float16"
                 qdtype = "e4m2_float8"
-            a_scale, a_axis = _make_scale_param(act.struct_info.shape, act.struct_info.dtype, kind=QKind.KIND_ACT, suffix=CALIBRATE_SUFFIX_NAME)
-            w_scale, w_axis = _make_scale_param(weights.struct_info.shape, weights.struct_info.dtype, kind=QKind.KIND_WEIGHTS, suffix=CALIBRATE_SUFFIX_NAME)
+            a_scale, a_axis = _make_scale_param(act.struct_info.shape, act.struct_info.dtype, kind=QKind.KIND_ACT, suffix=QUANT_SUFFIX_NAME)
+            w_scale, w_axis = _make_scale_param(weights.struct_info.shape, weights.struct_info.dtype, kind=QKind.KIND_WEIGHTS, suffix=QUANT_SUFFIX_NAME)
 
             a_zp = _make_zero_point_param(a_scale.struct_info.shape, dtype=zpdtype)
             w_zp = _make_zero_point_param(w_scale.struct_info.shape, dtype=zpdtype)

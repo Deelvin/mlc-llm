@@ -13,12 +13,11 @@ from tvm import dlight as dl
 from tvm.relax.backend import get_patterns_with_prefix
 from tvm.relax.backend.contrib.cutlass import annotate_workspace
 
-import mlc_llm
 # from mlc_llm import utils
 # # from mlc_llm.utils import load_params, get_model_names
 # from mlc_llm.relax_model import llama, llama_batched_vllm
-from mlc_llm.transform.smoothquant import get_scale_param_name, get_zp_param_name, SMOOTH_SUFFIX_NAME, CALIBRATE_SUFFIX_NAME
-from mlc_llm.transform.smoothquant import SmoothQuantAnnotator, SmoothQuantStatCollector
+from mlc_chat.compiler_pass.smoothquant import get_scale_param_name, get_zp_param_name, SMOOTH_SUFFIX_NAME, QUANT_SUFFIX_NAME
+from mlc_chat.compiler_pass.smoothquant import SmoothQuantAnnotator, SmoothQuantStatCollector
 
 # List of supported calibration datasets.
 dataset_list = ["dummy", "piqa", "gsm8k"]
@@ -235,11 +234,11 @@ def _calculate_quantization_params(
     qparams = {}
     for a_max_element, a_min_element, w_max_element, w_min_element in zip(*stats[func_name]):
         a_scale, a_zp = _calculate_scale_zp(a_max_element, a_min_element, a_dtype, a_qscheme)
-        qparams[get_scale_param_name(idx, CALIBRATE_SUFFIX_NAME)] = tvm.nd.array(a_scale, tvm.cpu(0))
+        qparams[get_scale_param_name(idx, QUANT_SUFFIX_NAME)] = tvm.nd.array(a_scale, tvm.cpu(0))
         qparams[get_zp_param_name(idx+2)] = tvm.nd.array(a_zp, tvm.cpu(0))
 
         w_scale, w_zp = _calculate_scale_zp(w_max_element, w_min_element, w_dtype, w_qscheme)
-        qparams[get_scale_param_name(idx+1, CALIBRATE_SUFFIX_NAME)] = tvm.nd.array(w_scale, tvm.cpu(0))
+        qparams[get_scale_param_name(idx+1, QUANT_SUFFIX_NAME)] = tvm.nd.array(w_scale, tvm.cpu(0))
         qparams[get_zp_param_name(idx+3)] = tvm.nd.array(w_zp, tvm.cpu(0))
         idx += 4
 
