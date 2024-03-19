@@ -14,4 +14,8 @@ from .smoothquant import (
     SmoothQuantStopLiftParamsOptimizer,
     SmoothQuantBundleModelParams,
     SmoothQuantParamsMutator,
+    SCALE_PREFIX_NAME,
+    ZP_PREFIX_NAME,
+    SMOOTH_SUFFIX_NAME,
+    CALIBRATE_SUFFIX_NAME,
 )

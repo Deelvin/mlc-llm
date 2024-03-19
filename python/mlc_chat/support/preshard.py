@@ -143,18 +143,19 @@ def _duplicate_array(arr, num: int):
     return [np.copy(arr.numpy()) for _ in range(num)] if arr is not None else [None] * num
 
 
-def load_smoothquant_params(tensor_parallel_shards, args):
+def shard_smoothquant_params(tensor_parallel_shards, args):
     model_config = args.model.config.from_file(args.config)
     model_config.tensor_parallel_shards = tensor_parallel_shards
     model = args.model.model(model_config)
     model.to(args.quantization.model_dtype)
 
-    param_to_smooth_factor = load_file(path="/opt/scratch/ibsidorenko/MLCServe/4commit/dist/SMQ/smooth_scale2param.json")
-    param_to_scale = load_file(path="/opt/scratch/ibsidorenko/MLCServe/4commit/dist/SMQ/quantize_scale2param.json")
+    pth = args.output
+    param_to_smooth_factor = load_file(path=f"{pth}/smooth_scale2param.json")
+    param_to_scale = load_file(path=f"{pth}/quantize_scale2param.json")
     import tvm
     from tvm.contrib import tvmjs
-    smoothing_factors_dict, _ = tvmjs.load_ndarray_cache("/opt/scratch/ibsidorenko/MLCServe/4commit/dist/SMQ/smoothquant/smooth/", tvm.cpu())
-    scales_dict, _ = tvmjs.load_ndarray_cache("/opt/scratch/ibsidorenko/MLCServe/4commit/dist/SMQ/smoothquant/quantize/", tvm.cpu())
+    smoothing_factors_dict, _ = tvmjs.load_ndarray_cache(f"{pth}/smooth/", tvm.cpu())
+    scales_dict, _ = tvmjs.load_ndarray_cache(f"{pth}/quantize/", tvm.cpu())
 
     out = OrderedDict()
     for name, param in model.state_dict().items():
@@ -183,17 +184,19 @@ def load_smoothquant_params(tensor_parallel_shards, args):
                 for shard_idx in range(tensor_parallel_shards):
                     out[_sharded_param_name(a_factor, shard_idx)] = a_factors[shard_idx]
                     out[_sharded_param_name(w_factor, shard_idx)] = w_factors[shard_idx]
-                    out[_sharded_param_name(a_scale, shard_idx)] = a_scales[shard_idx]
-                    out[_sharded_param_name(w_scale, shard_idx)] = w_scales[shard_idx]
-                    out[_sharded_param_name(a_zp, shard_idx)] = a_zps[shard_idx]
-                    out[_sharded_param_name(w_zp, shard_idx)] = w_zps[shard_idx]
+                    if args.quantization.name != "smq_q8i8f16_0":
+                        #out[_sharded_param_name(a_scale, shard_idx)] = a_scales[shard_idx]
+                        out[_sharded_param_name(w_scale, shard_idx)] = w_scales[shard_idx]
+                        #out[_sharded_param_name(a_zp, shard_idx)] = a_zps[shard_idx]
+                        out[_sharded_param_name(w_zp, shard_idx)] = w_zps[shard_idx]
             else:
                 out[a_factor] = smoothing_factors_dict[a_factor]
                 out[w_factor] = smoothing_factors_dict[w_factor]
-                out[a_scale]  = scales_dict[a_scale]
-                out[w_scale]  = scales_dict[w_scale]
-                out[a_zp]  = scales_dict[a_zp]
-                out[w_zp]  = scales_dict[w_zp]
+                if args.quantization.name != "smq_q8i8f16_0":
+                    #out[a_scale]  = scales_dict[a_scale]
+                    out[w_scale]  = scales_dict[w_scale]
+                    #out[a_zp]  = scales_dict[a_zp]
+                    out[w_zp]  = scales_dict[w_zp]
     return out
 
 

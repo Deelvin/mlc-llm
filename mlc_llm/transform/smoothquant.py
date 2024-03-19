@@ -23,15 +23,6 @@ SMOOTH_SUFFIX_NAME = "smooth"
 CALIBRATE_SUFFIX_NAME = "calibrate"
 ZP_PREFIX_NAME = "sq_zp_"
 
-def encode_param_name(name:str) -> str:
-    #TODO: What is correct way get real param names?
-    new_name = name.replace("_", ".")
-    replace_dict = {"self.attn": "self_attn", "qkv.proj": "qkv_proj", "o.proj": "o_proj",
-                    "gate.up.proj": "gate_up_proj", "down.proj": "down_proj", "lm.head": "lm_head"}
-    for old, new in replace_dict.items():
-         new_name = new_name.replace(old, new)
-    new_name = new_name[:-1] if new_name[-1].isdigit() else new_name
-    return new_name
 
 def _try_convert_to_scalar_const(expr: tvm.relax.Expr) -> Union[tvm.relax.Expr, float, int]:
     if isinstance(expr, tvm.relax.Constant):
@@ -56,7 +47,7 @@ def get_zp_param_name(counter):
 
 @mutator
 class Annotator(PyExprMutator):
-    def __init__(self, irmod: tvm.IRModule, op_mode: str) -> None:
+    def __init__(self, irmod: tvm.IRModule, idx_to_param_name: Dict[int, str], op_mode: str) -> None:
         super().__init__(irmod)
         self.mod = irmod
         self.sm_counter = 0
@@ -64,6 +55,7 @@ class Annotator(PyExprMutator):
         # Operation mode of the annotator: "smoothing" or "quantization"
         assert op_mode in OPMODES, f"unsupported operation mode: '{op_mode}'"
         self.op_mode = op_mode
+        self.idx_to_param_name = idx_to_param_name
         self.scale2param: Dict[str, Dict[str, str]] = {}
         self.curr_func_name = None
 
@@ -71,8 +63,6 @@ class Annotator(PyExprMutator):
         for gv, func in self.mod.functions.items():
             if not isinstance(func, relax.Function):
                 continue
-            #if "evaluate" in gv.name_hint:
-            #    continue
             self.curr_func_name = gv.name_hint
             self.scale2param[self.curr_func_name] = {}
             self.sm_counter = 0
@@ -145,23 +135,26 @@ class Annotator(PyExprMutator):
             qw = R.quantize(weights, w_scale, w_zp, axis=w_axis, out_dtype="int8")
             rhs = R.dequantize(qw, w_scale, w_zp, axis=w_axis, out_dtype=weights.struct_info.dtype)
             multiply = self.lookup_binding(weights)
-            param = multiply.args[0]
-            #self.scale2param[self.curr_func_name][a_zp.name_hint] = param.name_hint
-            #self.scale2param[self.curr_func_name][w_zp.name_hint] = param.name_hint
-            #self.scale2param[self.curr_func_name][a_scale.name_hint] = param.name_hint
-            #self.scale2param[self.curr_func_name][w_scale.name_hint] = param.name_hint
-            param_name = encode_param_name(param.name_hint)
-            self.scale2param[self.curr_func_name][param_name] = (a_scale.name_hint, w_scale.name_hint, a_zp.name_hint, w_zp.name_hint)
+            if self.idx_to_param_name is not None:
+                tgi = self.lookup_binding(multiply.args[0])
+                assert isinstance(tgi, relax.TupleGetItem), "SmoothQuantAnnotator: unsupported case"
+                param_name = self.idx_to_param_name[tgi.index]
+                self.scale2param[self.curr_func_name][param_name] = (
+                    a_scale.name_hint, w_scale.name_hint, a_zp.name_hint, w_zp.name_hint
+                )
 
         else:
             a_scale, a_axis = _make_scale_param(act.struct_info.shape, act.struct_info.dtype, kind=QKind.KIND_ACT, suffix=SMOOTH_SUFFIX_NAME)
             w_scale, w_axis = _make_scale_param(weights.struct_info.shape, weights.struct_info.dtype, kind=QKind.KIND_WEIGHTS, suffix=SMOOTH_SUFFIX_NAME)
             lhs = R.divide(act, a_scale)
             rhs = R.multiply(weights, w_scale)
-            #self.scale2param[self.curr_func_name][a_scale.name_hint] = weights.name_hint
-            #self.scale2param[self.curr_func_name][w_scale.name_hint] = weights.name_hint
-            param_name = encode_param_name(weights.name_hint)
-            self.scale2param[self.curr_func_name][param_name] = (a_scale.name_hint, w_scale.name_hint)
+            if self.idx_to_param_name is not None:
+                tgi = self.lookup_binding(weights)
+                assert isinstance(tgi, relax.TupleGetItem), "SmoothQuantAnnotator: unsupported case"
+                param_name = self.idx_to_param_name[tgi.index]
+                self.scale2param[self.curr_func_name][param_name] = (
+                    a_scale.name_hint, w_scale.name_hint
+                )
 
         return R.linear(lhs, rhs)
 
@@ -184,17 +177,16 @@ class SmoothQuantAnnotator:
                                op2 = R.multiply(rhs, scale2)
                                R.linear(op1, op2)
     """
-    def __init__(self, op_mode: str = "smoothing") -> None:
+    def __init__(self, index_to_pname: Dict[int, str] = None, op_mode: str = "smoothing") -> None:
         self.op_mode = op_mode
+        self.index_to_pname = index_to_pname
         self.scale2param: Dict[str, Dict[str, str]] = {}
 
     def transform_module(self, irmod: tvm.IRModule, ctx: tvm.transform.PassContext) -> tvm.IRModule:
-        # return Annotator(irmod, self.op_mode).transform()
-        module_ann = Annotator(irmod, self.op_mode)
+        module_ann = Annotator(irmod, self.index_to_pname, self.op_mode)
         new_irmod = module_ann.transform()
         self.scale2param.update(module_ann.scale2param)
         return new_irmod
-        #return Annotator(irmod, self.op_mode).transform()
 
 
 @tvm.transform.module_pass(opt_level=0, name="SmoothQuantStatCollector")
@@ -345,10 +337,12 @@ class SmoothQuantLegalizer:
             dtype = matchings[pattern].struct_info.dtype
             mm_shape = matchings[pattern].struct_info.shape
 
-            def _simplify_constant(expr: tvm.relax.Constant) -> tvm.relax.Constant:
+            def _simplify_constant(expr: tvm.relax.Expr) -> tvm.relax.Expr:
                 """
                 Simplify R.const([value, value ... value]) -> R.const([value])
                 """
+                if not isinstance(expr, tvm.relax.Constant):
+                    return expr
                 if expr.struct_info.ndim == 1 and expr.struct_info.shape[0].value > 1:
                     # check that all elements of array are the same.
                     if np.all(np.isclose(expr.data.numpy(), expr.data.numpy()[0])):
