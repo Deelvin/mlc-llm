@@ -124,17 +124,29 @@ class Annotator(PyExprMutator):
         def _make_zero_point_param(shape: relax.ShapeExpr, dtype: str) -> tvm.relax.Var:
             return _make_param(get_zp_param_name(self.sm_counter), shape=shape, dtype=dtype)
 
-        if self.op_mode.startswith("smq_q8i8"):
+        if self.op_mode.startswith("smq_q8i8") or self.op_mode.startswith("smq_e"):
+            zpdtype = "int8"
+            qdtype = "int8"
+            if self.op_mode.startswith("smq_e4m3"):
+                zpdtype = "float16"
+                qdtype = "e4m3_float8"
+            elif self.op_mode.startswith("smq_e5m2"):
+                zpdtype = "float16"
+                qdtype = "e4m2_float8"
             a_scale, a_axis = _make_scale_param(act.struct_info.shape, act.struct_info.dtype, kind=QKind.KIND_ACT, suffix=CALIBRATE_SUFFIX_NAME)
             w_scale, w_axis = _make_scale_param(weights.struct_info.shape, weights.struct_info.dtype, kind=QKind.KIND_WEIGHTS, suffix=CALIBRATE_SUFFIX_NAME)
 
-            a_zp = _make_zero_point_param(a_scale.struct_info.shape, dtype="int8")
-            w_zp = _make_zero_point_param(w_scale.struct_info.shape, dtype="int8")
-            qa = R.quantize(act, a_scale, a_zp, axis=a_axis, out_dtype="int8")
+            a_zp = _make_zero_point_param(a_scale.struct_info.shape, dtype=zpdtype)
+            w_zp = _make_zero_point_param(w_scale.struct_info.shape, dtype=zpdtype)
+            qa = R.quantize(act, a_scale, a_zp, axis=a_axis, out_dtype=qdtype)
             lhs = R.dequantize(qa, a_scale, a_zp, axis=a_axis, out_dtype=act.struct_info.dtype)
-            qw = R.quantize(weights, w_scale, w_zp, axis=w_axis, out_dtype="int8")
+            qw = R.quantize(weights, w_scale, w_zp, axis=w_axis, out_dtype=qdtype)
             rhs = R.dequantize(qw, w_scale, w_zp, axis=w_axis, out_dtype=weights.struct_info.dtype)
             multiply = self.lookup_binding(weights)
+<<<<<<< HEAD
+=======
+            param = multiply.args[0]
+>>>>>>> 4ef1ad6... Fix quant calibration
             if self.idx_to_param_name is not None:
                 tgi = self.lookup_binding(multiply.args[0])
                 assert isinstance(tgi, relax.TupleGetItem), "SmoothQuantAnnotator: unsupported case"
