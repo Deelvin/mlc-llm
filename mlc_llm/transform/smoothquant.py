@@ -143,10 +143,6 @@ class Annotator(PyExprMutator):
             qw = R.quantize(weights, w_scale, w_zp, axis=w_axis, out_dtype=qdtype)
             rhs = R.dequantize(qw, w_scale, w_zp, axis=w_axis, out_dtype=weights.struct_info.dtype)
             multiply = self.lookup_binding(weights)
-<<<<<<< HEAD
-=======
-            param = multiply.args[0]
->>>>>>> 4ef1ad6... Fix quant calibration
             if self.idx_to_param_name is not None:
                 tgi = self.lookup_binding(multiply.args[0])
                 assert isinstance(tgi, relax.TupleGetItem), "SmoothQuantAnnotator: unsupported case"
