@@ -166,6 +166,12 @@ def get_quantization_scheme(qscheme: str):
         return QAlgo.PER_TENSOR_SYM, QAlgo.PER_CHANNEL_SYM
     elif qscheme in {"smq_q8i8f16_2", "smq_q8i8f32_2"}:
         return QAlgo.PER_TENSOR_ASYM, QAlgo.PER_CHANNEL_ASYM
+    elif qscheme == "smq_e4m3_float8_0":
+        return QAlgo.PER_TENSOR_SYM, QAlgo.PER_TENSOR_SYM
+    elif qscheme == "smq_e4m3_float8_1":
+        return QAlgo.PER_TENSOR_SYM, QAlgo.PER_CHANNEL_SYM
+    elif qscheme in {"smq_e4m3_float8_2"}:
+        return QAlgo.PER_TENSOR_ASYM, QAlgo.PER_CHANNEL_ASYM
     else:
         assert False, f"Unknown quantization scheme: {qscheme}"
         return None, None
@@ -193,23 +199,33 @@ def _calculate_quantization_params(
     a_qscheme, w_qscheme = get_quantization_scheme(config["qscheme"])
 
     def _calculate_scale_zp(arr_max: np.ndarray, arr_min: np.ndarray, dtype: str, algo: QAlgo):
-        max_value = arr_max.dtype.type(np.iinfo(dtype).max)
-        min_value = arr_max.dtype.type(np.iinfo(dtype).min)
+        if dtype.startswith("int"):
+            max_value = arr_max.dtype.type(np.iinfo(dtype).max)
+            min_value = arr_max.dtype.type(np.iinfo(dtype).min)
+            zp_type = dtype
+        elif dtype == "e4m3_float8": # based on https://arxiv.org/pdf/2209.05433.pdf
+            max_value = arr_max.dtype.type(448)
+            min_value = arr_max.dtype.type(-448)
+            zp_type = "float16"
+        elif dtype == "e5m2_float8":
+            max_value = arr_max.dtype.type(57344)
+            min_value = arr_max.dtype.type(-57344)
+            zp_type = "float16"
         size = arr_max.size
         if algo is QAlgo.PER_TENSOR_SYM:
             arr = np.maximum(np.abs(arr_max), np.abs(arr_min))
             scale = np.array([np.max(arr) / max_value] * size)
-            zp = np.zeros_like(scale, dtype="int8")
+            zp = np.zeros_like(scale, dtype=zp_type)
         elif algo is QAlgo.PER_CHANNEL_SYM:
             arr = np.maximum(np.abs(arr_max), np.abs(arr_min))
             scale = arr / max_value
-            zp = np.zeros_like(scale, dtype="int8")
+            zp = np.zeros_like(scale, dtype=zp_type)
         elif algo is QAlgo.PER_TENSOR_ASYM:
             scale = np.array([(np.max(arr_max) - np.min(arr_min)) / (max_value - min_value)] * size)
-            zp = (-np.round(np.min(arr_min) / scale) + min_value).astype("int8")
+            zp = (-np.round(np.min(arr_min) / scale) + min_value).astype(zp_type)
         elif algo is QAlgo.PER_CHANNEL_ASYM:
             scale = (arr_max - arr_min) / (max_value - min_value)
-            zp = (-np.round(arr_min / scale) + min_value).astype("int8")
+            zp = (-np.round(arr_min / scale) + min_value).astype(zp_type)
         else:
             assert False, f"Unknown quantization algorithm: {algo}"
             return None, None

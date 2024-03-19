@@ -14,7 +14,7 @@ from typing import Dict, List, Union
 from enum import Enum
 
 
-QSCHEMES = ("smq_q8i8f16_0", "smq_q8i8f16_1", "smq_q8i8f16_2", "smq_q8i8f32_2")
+QSCHEMES = ("smq_q8i8f16_0", "smq_q8i8f16_1", "smq_q8i8f16_2", "smq_q8i8f32_2", "smq_e4m3_float8_0")
 OPMODES = ("smoothing", *QSCHEMES)
 
 SCALE_PREFIX_NAME = "sq_scale_"
@@ -115,7 +115,7 @@ class Annotator(PyExprMutator):
               broadcasted to the corresponding size.
             """
             axis = -1
-            if kind == QKind.KIND_WEIGHTS and self.op_mode.startswith("smq_q8i8"):
+            if kind == QKind.KIND_WEIGHTS and (self.op_mode.startswith("smq_q8i8") or self.op_mode.startswith("smq_e")) :
                 axis = -2
             n = shape[axis]
             scale = _make_param(get_scale_param_name(self.sm_counter, suffix), shape=[n], dtype=dtype)
@@ -142,7 +142,6 @@ class Annotator(PyExprMutator):
                 self.scale2param[self.curr_func_name][param_name] = (
                     a_scale.name_hint, w_scale.name_hint, a_zp.name_hint, w_zp.name_hint
                 )
-
         else:
             a_scale, a_axis = _make_scale_param(act.struct_info.shape, act.struct_info.dtype, kind=QKind.KIND_ACT, suffix=SMOOTH_SUFFIX_NAME)
             w_scale, w_axis = _make_scale_param(weights.struct_info.shape, weights.struct_info.dtype, kind=QKind.KIND_WEIGHTS, suffix=SMOOTH_SUFFIX_NAME)
@@ -316,9 +315,11 @@ class SmoothQuantLegalizer:
     Pass that performs the following transformation:
     quantize + dequantize + matmul(fp16, fp16) -> quantize + matmul(int8, int8) + dequantize.
     """
-    def __init__(self, adtype: str = "int8", wdtype: str = "int8"):
+    def __init__(self, adtype: str = "int8", wdtype: str = "int8", zptype: str = "int8", acctype: str = "int32"):
         self.dtype_act = adtype
         self.dtype_weight = wdtype
+        self.dtype_zpoint = zptype
+        self.dtype_acc = acctype
 
     def transform_module(self, mod: tvm.IRModule, ctx: tvm.transform.PassContext) -> tvm.IRModule:
         act = wildcard()
@@ -364,7 +365,7 @@ class SmoothQuantLegalizer:
                     scale = R.const([scalar_scale1 * scalar_scale2] * size, "float32")
                 else:
                     scale = R.multiply(R.astype(scale1, "float32"), R.astype(scale2, "float32"))
-                return R.dequantize(call, scale, R.const(0, "int8"), axis=axis, out_dtype=out_dtype)
+                return R.dequantize(call, scale, R.const(0, self.dtype_zpoint), axis=axis, out_dtype=out_dtype)
 
             def _make_linear(
                 lhs: tvm.relax.Call,
@@ -376,17 +377,17 @@ class SmoothQuantLegalizer:
                 lhs_zp_const = _try_convert_to_scalar_const(lhs_zp)
                 rhs_zp_const = _try_convert_to_scalar_const(rhs_zp)
                 # Make term1:
-                term1 = R.linear(lhs, rhs, out_dtype="int32")
+                term1 = R.linear(lhs, rhs, out_dtype=self.dtype_acc)
                 # Make term2:
-                lhs_reduced = R.sum(R.astype(lhs, dtype="int32"), axis=-1, keepdims=True)
-                rhs_zp = R.astype(rhs_zp, dtype="int32")
+                lhs_reduced = R.sum(R.astype(lhs, dtype=self.dtype_acc), axis=-1, keepdims=True)
+                rhs_zp = R.astype(rhs_zp, dtype=self.dtype_acc)
                 term2 = R.multiply(lhs_reduced, rhs_zp)
                 # Make term3:
-                rhs_reduced = R.sum(R.astype(rhs, dtype="int32"), axis=-1, keepdims=False)
-                lhs_zp = R.astype(lhs_zp, dtype="int32")
+                rhs_reduced = R.sum(R.astype(rhs, dtype=self.dtype_acc), axis=-1, keepdims=False)
+                lhs_zp = R.astype(lhs_zp, dtype=self.dtype_acc)
                 term3 = R.multiply(rhs_reduced, lhs_zp)
                 # Make term4:
-                term4 = R.multiply(R.multiply(lhs_zp, rhs_zp), R.const(reduction_dim_size, "int32"))
+                term4 = R.multiply(R.multiply(lhs_zp, rhs_zp), R.const(reduction_dim_size, self.dtype_acc))
                 # Combine result:
                 if is_zero(lhs_zp_const) and is_zero(rhs_zp_const):
                     return term1

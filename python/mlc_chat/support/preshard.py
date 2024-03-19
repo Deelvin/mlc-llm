@@ -211,6 +211,7 @@ def _create_smoothquant_func(
         smoothing_factor: Union[np.ndarray, nd.NDArray],
         scale: Union[np.ndarray, nd.NDArray],
         zp: Union[np.ndarray, nd.NDArray],
+        dtype: str
     ):
         weight_var = relax.Var("weight", relax.TensorStructInfo(param.shape, param.dtype))
         with bb.function(name=func_name, params=[weight_var]):
@@ -218,7 +219,7 @@ def _create_smoothquant_func(
                 if smoothing_factor is not None:
                     weight_var = bb.emit(relax.op.multiply(weight_var, relax.const(smoothing_factor)))
                 if scale is not None and zp is not None:
-                    weight_var = bb.emit(relax.op.quantize(weight_var, relax.const(scale), relax.const(zp), axis=-2, out_dtype="int8"))
+                    weight_var = bb.emit(relax.op.quantize(weight_var, relax.const(scale), relax.const(zp), axis=-2, out_dtype=dtype))
                 gv = bb.emit_output(weight_var)
             bb.emit_func_output(gv)
 
@@ -230,7 +231,7 @@ def _create_smoothquant_func(
     if tensor_parallel_shards == 1 or shard_strategy is None:
         func_name = f"convert_param_{idx}"
         func_names.append((param_name, func_name))
-        _create_func(func_name, bb, param, factor_param, scale_param, zp_param)
+        _create_func(func_name, bb, param, factor_param, scale_param, zp_param, smq_params.get("quant_config").quantize_dtype)
     else:
         if shard_strategy.dim == 0:
             factors = _duplicate_array(factor_param, tensor_parallel_shards)
@@ -244,7 +245,7 @@ def _create_smoothquant_func(
         for shard_idx in range(tensor_parallel_shards):
             func_name = f"convert_param_{idx}_shard_{shard_idx}"
             func_names.append((_sharded_param_name(param_name, shard_idx), func_name))
-            _create_func(func_name, bb, param, factors[shard_idx], scales[shard_idx], zps[shard_idx])
+            _create_func(func_name, bb, param, factors[shard_idx], scales[shard_idx], zps[shard_idx], dtype = smq_params.get("quant_config").quantize_dtype)
     return func_names
 
 
@@ -278,10 +279,13 @@ def gen_smoothquant(named_params: Dict[str, nn.Parameter], tensor_parallel_shard
                 smoothing_factor=smoothing_factors_dict[smooth_factor_name],
                 scale=scales_dict[scale_name],
                 zp=scales_dict[zp_name],
+                quant_config = args.quantization,
+                dtype = args.quantization.model_dtype
             )
             for sharded_param_name, func_name in func_names:
                 param_to_smoothquant_func[sharded_param_name] = func_name
-                named_params[sharded_param_name].to("int8")  # Update dtype for checker
+
+                named_params[sharded_param_name].to(args.quantization.quantize_dtype)  # Update dtype for checker
 
     assert not param_to_smooth_factor["prefill"], "detected not processed smoothing factors"
     assert not param_to_scale["prefill"], "detected not processed scales/zero_points"
