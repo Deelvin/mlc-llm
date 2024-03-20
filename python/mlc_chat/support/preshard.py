@@ -255,12 +255,12 @@ def gen_smoothquant(named_params: Dict[str, nn.Parameter], tensor_parallel_shard
     model = args.model.model(model_config)
     model.to(args.quantization.model_dtype)
     pth = args.output
-    param_to_smooth_factor = load_file(path=f"{args.convert_weight}/smooth_scale2param.json")
-    param_to_scale = load_file(path=f"{args.convert_weight}/quantize_scale2param.json")
+    param_to_smooth_factor = load_file(path=f"{args.statistics_path}/smooth_scale2param.json")
+    param_to_scale = load_file(path=f"{args.statistics_path}/quantize_scale2param.json")
     import tvm
     from tvm.contrib import tvmjs
-    smoothing_factors_dict, _ = tvmjs.load_ndarray_cache(f"{args.convert_weight}/smooth/", tvm.cpu())
-    scales_dict, _ = tvmjs.load_ndarray_cache(f"{args.convert_weight}/quantize/", tvm.cpu())
+    smoothing_factors_dict, _ = tvmjs.load_ndarray_cache(f"{args.statistics_path}/smooth/", tvm.cpu())
+    scales_dict, _ = tvmjs.load_ndarray_cache(f"{args.statistics_path}/quantize/", tvm.cpu())
 
     bb = relax.BlockBuilder()
     param_to_smoothquant_func = {}
