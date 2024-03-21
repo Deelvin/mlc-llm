@@ -14,7 +14,7 @@ from typing import Dict, List, Union
 from enum import Enum
 
 
-QSCHEMES = ("smq_q8i8f16_0", "smq_q8i8f16_1", "smq_q8i8f16_2", "smq_q8i8f32_2", "smq_e4m3_float8_0")
+QSCHEMES = ("smq_q8i8f16_0", "smq_q8i8f16_1", "smq_q8i8f16_2", "smq_q8i8f32_2", "smq_e4m3_float8_0", "smq_e4m3_float8_1", "smq_e4m3_float8_2")
 OPMODES = ("smoothing", *QSCHEMES)
 
 SCALE_PREFIX_NAME = "sq_scale_"

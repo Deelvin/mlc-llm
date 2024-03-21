@@ -145,5 +145,21 @@ QUANTIZATION: Dict[str, Quantization] = {
         quantize_dtype="e4m3_float8",
         storage_dtype="e4m3_float8",
         model_dtype="float16",
+    ),
+    "smq_e4m3_float8_1": SmoothQuantize(
+        name="smq_e4m3_float8_1",
+        kind="smoothquant",
+        quantize_dtype="e4m3_float8",
+        storage_dtype="e4m3_float8",
+        model_dtype="float16",
+    ),
+    "smq_e4m3_float8_2": SmoothQuantize(
+        name="smq_e4m3_float8_2",
+        kind="smoothquant",
+        quantize_dtype="e4m3_float8",
+        storage_dtype="e4m3_float8",
+        model_dtype="float16",
     )
+
+
 }
