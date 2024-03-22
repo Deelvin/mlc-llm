@@ -314,6 +314,8 @@ class SmoothQuantStatCollector:
 def is_zero(expr: Union[int, tvm.relax.Constant]) -> bool:
     if isinstance(expr, int) and expr == 0:
         return True
+    if isinstance(expr, float) and expr == 0.0:
+        return True
     return False
 
 
