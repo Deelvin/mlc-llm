@@ -2,6 +2,7 @@
 from typing import Any, Dict, List, Union
 from collections import OrderedDict
 import numpy as np
+import os
 
 from tvm import IRModule
 from tvm import dlight as dl
@@ -149,9 +150,9 @@ def shard_smoothquant_params(tensor_parallel_shards, args):
     model = args.model.model(model_config)
     model.to(args.quantization.model_dtype)
 
-    pth = args.output
-    param_to_smooth_factor = load_file(path=f"{pth}/smooth_scale2param.json")
-    param_to_scale = load_file(path=f"{pth}/quantize_scale2param.json")
+    pth = args.statistics_path
+    param_to_smooth_factor = load_file(path=os.path.join(pth, "smooth_scale2param.json"))
+    param_to_scale = load_file(path=os.path.join(pth, "quantize_scale2param.json"))
     import tvm
     from tvm.contrib import tvmjs
     smoothing_factors_dict, _ = tvmjs.load_ndarray_cache(f"{pth}/smooth/", tvm.cpu())
@@ -184,18 +185,16 @@ def shard_smoothquant_params(tensor_parallel_shards, args):
                 for shard_idx in range(tensor_parallel_shards):
                     out[_sharded_param_name(a_factor, shard_idx)] = a_factors[shard_idx]
                     out[_sharded_param_name(w_factor, shard_idx)] = w_factors[shard_idx]
-                    if args.quantization.name != "smq_q8i8f16_0":
-                        #out[_sharded_param_name(a_scale, shard_idx)] = a_scales[shard_idx]
+                    if args.quantization.name != "smq_q8i8f16_0" and \
+                        args.quantization.name != "smq_e4m3_float8_0":
                         out[_sharded_param_name(w_scale, shard_idx)] = w_scales[shard_idx]
-                        #out[_sharded_param_name(a_zp, shard_idx)] = a_zps[shard_idx]
                         out[_sharded_param_name(w_zp, shard_idx)] = w_zps[shard_idx]
             else:
                 out[a_factor] = smoothing_factors_dict[a_factor]
                 out[w_factor] = smoothing_factors_dict[w_factor]
-                if args.quantization.name != "smq_q8i8f16_0":
-                    #out[a_scale]  = scales_dict[a_scale]
+                if args.quantization.name != "smq_q8i8f16_0" and \
+                    args.quantization.name != "smq_e4m3_float8_0":
                     out[w_scale]  = scales_dict[w_scale]
-                    #out[a_zp]  = scales_dict[a_zp]
                     out[w_zp]  = scales_dict[w_zp]
     return out
 
