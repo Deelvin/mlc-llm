@@ -6,6 +6,7 @@ from .ft_quantization import FTQuantize
 from .group_quantization import GroupQuantize
 from .no_quantization import NoQuantize
 from .per_tensor_quantization import PerTensorQuantize
+from .smooth_quantization import SmoothQuantize
 
 Quantization = Any
 """Quantization is an object that represents an quantization algorithm. It is required to
@@ -201,4 +202,46 @@ QUANTIZATION: Dict[str, Quantization] = {
         model_dtype="float16",
         quantize_embedding=False,
     ),
+    "smq_q8i8f16_0": SmoothQuantize(
+        name="smq_q8i8f16_0",
+        kind="smoothquant",
+        quantize_dtype="int8",
+        storage_dtype="int8",
+        model_dtype="float16",
+    ),
+    "smq_q8i8f16_1": SmoothQuantize(
+        name="smq_q8i8f16_1",
+        kind="smoothquant",
+        quantize_dtype="int8",
+        storage_dtype="int8",
+        model_dtype="float16",
+    ),
+    "smq_q8i8f16_2": SmoothQuantize(
+        name="smq_q8i8f16_2",
+        kind="smoothquant",
+        quantize_dtype="int8",
+        storage_dtype="int8",
+        model_dtype="float16",
+    ),
+    "smq_e4m3_float8_0": SmoothQuantize(
+        name="smq_e4m3_float8_0",
+        kind="smoothquant",
+        quantize_dtype="e4m3_float8",
+        storage_dtype="e4m3_float8",
+        model_dtype="float16",
+    ),
+    "smq_e4m3_float8_1": SmoothQuantize(
+        name="smq_e4m3_float8_1",
+        kind="smoothquant",
+        quantize_dtype="e4m3_float8",
+        storage_dtype="e4m3_float8",
+        model_dtype="float16",
+    ),
+    "smq_e4m3_float8_2": SmoothQuantize(
+        name="smq_e4m3_float8_2",
+        kind="smoothquant",
+        quantize_dtype="e4m3_float8",
+        storage_dtype="e4m3_float8",
+        model_dtype="float16",
+    )
 }
