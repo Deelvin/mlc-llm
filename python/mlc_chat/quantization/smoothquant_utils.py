@@ -165,11 +165,11 @@ def get_quantization_scheme(qscheme: str):
         return QAlgo.PER_TENSOR_SYM, QAlgo.PER_CHANNEL_SYM
     elif qscheme in {"smq_q8i8f16_2", "smq_q8i8f32_2"}:
         return QAlgo.PER_TENSOR_ASYM, QAlgo.PER_CHANNEL_ASYM
-    elif qscheme == "smq_e4m3_float8_0":
+    elif qscheme in {"smq_e4m3_float8_0", "smq_e5m2_float8_0"}:
         return QAlgo.PER_TENSOR_SYM, QAlgo.PER_TENSOR_SYM
-    elif qscheme == "smq_e4m3_float8_1":
+    elif qscheme  in {"smq_e4m3_float8_1", "smq_e5m2_float8_1"}:
         return QAlgo.PER_TENSOR_SYM, QAlgo.PER_CHANNEL_SYM
-    elif qscheme in {"smq_e4m3_float8_2"}:
+    elif qscheme in {"smq_e4m3_float8_2", "smq_e5m2_float8_2"}:
         return QAlgo.PER_TENSOR_ASYM, QAlgo.PER_CHANNEL_ASYM
     else:
         assert False, f"Unknown quantization scheme: {qscheme}"
