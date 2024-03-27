@@ -73,7 +73,6 @@ def _calculate_scale_params(
     if stats[func_name] is None:
         return {}
 
-    # scales = act_scales.pow(alpha) / weight_scales.pow(1-alpha)
     alpha = config["alpha"]
     a_stat, w_stat = stats[func_name]
     assert len(a_stat) == len(w_stat)
