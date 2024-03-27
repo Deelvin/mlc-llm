@@ -23,7 +23,13 @@ from .utils import apply_sharding
 
 
 def quantize(
-    x: nn.Tensor, quantize_dtype: str, kind="fp8-max", name: str = "quantize", **kwargs
+    x: nn.Tensor,
+    quantize_dtype: str,
+    kind="fp8-max",
+    scale_tensor: Optional[nn.Tensor] = None,
+    compute_scale_only=False,
+    name: str = "quantize",
+    **kwargs,
 ) -> Tuple[nn.Tensor, ...]:
     """
     Quantizes the input tensor to a specified lower-precision datatype using different quantization schemes.
@@ -62,13 +68,13 @@ def quantize(
         assert (
             "max_int_value" in kwargs
         ), "'max_int_value' must be provided when using fp8-max quantization"
+        assert len(kwargs) == 1, f"Unknown additional kwargs: {kwargs}"
 
-        def fused_compute_scale_and_quantize(
-            tensor: te.Tensor,
-            max_abs: te.Tensor,
-            axis: int,
-            out_shape: Optional[List[tir.PrimExpr]] = None,
-        ):
+        assert (
+            compute_scale_only == False or scale_tensor == None
+        ), "fp8-max calibration: Cannot provide a scale and request scale computation"
+
+        def _compute_scale(max_abs: te.Tensor) -> te.Tensor:
             max_int = tir.const(kwargs["max_int_value"], x.dtype)
             min_scaling_factor = tir.const(1.0 / (kwargs["max_int_value"] * 512.0), x.dtype)
 
@@ -80,6 +86,9 @@ def quantize(
                 ),
                 name="scale",
             )
+            return scale
+
+        def _quantize(tensor: te.Tensor, scale: te.Tensor) -> te.Tensor:
             scaled_act = te.compute(
                 shape=tensor.shape,
                 fcompute=lambda *idx: tir.Cast(
@@ -87,26 +96,53 @@ def quantize(
                     tensor(*idx) / scale[0],
                 ),
             )
+            return scaled_act
 
+        def _fused_compute_scale_and_quantize(
+            tensor: te.Tensor,
+            max_abs: te.Tensor,
+            out_shape: Optional[List[tir.PrimExpr]] = None,
+        ):
+            scale = _compute_scale(max_abs)
+            scaled_act = _quantize(tensor, scale)
             return scaled_act, scale
 
-        max_abs = nn.op.extern(
-            "tvm.contrib.cuda.reduce_max_abs",
-            [x],
-            nn.Tensor.placeholder((1,), x.dtype),
-        )
+        if compute_scale_only or scale_tensor == None:
+            max_abs = nn.op.extern(
+                "tvm.contrib.cuda.reduce_max_abs",
+                [x],
+                nn.Tensor.placeholder((1,), x.dtype),
+            )
 
-        quant, scale = nn.op.tensor_expr_op(  # pylint: disable=invalid-name
-            lambda tensor, max_tensor: fused_compute_scale_and_quantize(  # pylint: disable=protected-access
-                tensor,
-                max_tensor,
-                axis=None,
-                out_shape=x.shape,
-            ),
-            name_hint="quantize_act",
-            args=[x, max_abs],
-        )
-        return quant, scale
+        if compute_scale_only:
+            scale = nn.op.tensor_expr_op(  # pylint: disable=invalid-name
+                lambda max_tensor: _compute_scale(  # pylint: disable=protected-access
+                    max_tensor,
+                ),
+                name_hint="compute_scale",
+                args=[max_abs],
+            )
+            return scale
+        elif scale_tensor == None:
+            quant, scale = nn.op.tensor_expr_op(  # pylint: disable=invalid-name
+                lambda tensor, max_tensor: _fused_compute_scale_and_quantize(  # pylint: disable=protected-access
+                    tensor,
+                    max_tensor,
+                ),
+                name_hint="compute_scale_and_quantize",
+                args=[x, max_abs],
+            )
+            return quant, scale
+        else:
+            quant = nn.op.tensor_expr_op(  # pylint: disable=invalid-name
+                lambda tensor, scale_t: _quantize(  # pylint: disable=protected-access
+                    tensor,
+                    scale_t,
+                ),
+                name_hint="quantize",
+                args=[x, scale_tensor],
+            )
+            return quant
     else:
         raise ValueError("Unknown quantization kind")
 
@@ -296,11 +332,26 @@ class MixtralExpertsFP8(
         self.weight_dtype = weight_dtype
         self.runtime = runtime
         self.weight_config = weight_config
-        self.max_int_value = 448 if "e4m3" in activation_dtype else 57344
+        self.max_int_value = {
+            key: self.get_max_int(dtype)
+            for key, dtype in zip(["x", "w"], [self.activation_dtype, self.weight_dtype])
+        }
+
         self.tensor_parallel_shards = tensor_parallel_shards
 
         if "max" in self.runtime:
             self.q_calibration_scale = nn.Parameter((1,), weight_config.model_dtype)
+
+    @staticmethod
+    def get_max_int(dtype):
+        if dtype == "e4m3_float8":
+            return 448
+        elif dtype == "e5m2_float8":
+            return 57344
+        elif dtype == "float16":
+            return 65504
+        else:
+            raise NotImplementedError()
 
     def add_calibration_params(self, quant_map: QuantizeMapping, layer_name: str):
         scale_name = f"{layer_name}.q_calibration_scale"
@@ -351,21 +402,45 @@ class MixtralExpertsFP8(
         if "shard_strategy" in src.weight.attrs:
             shard = src.weight.attrs["shard_strategy"]
             apply_sharding(shard, f"{shard.name}_q_weight", quantized_mistral_experts.q_weight)
-            # scale doesn't need to be sharded since it's the same for all shards
+            apply_sharding(
+                tp.ShardScalar(name=shard.name),
+                f"{shard.name}_q_scale",
+                quantized_mistral_experts.q_scale,
+            )
 
         return quantized_mistral_experts
 
     def forward(self, x: nn.Tensor, indptr: nn.Tensor) -> nn.Tensor:  # pylint: disable=invalid-name
         if self.runtime == "max-calibration":
-            x, local_scale = nn.op.quantize(
-                x,
-                quantize_dtype=self.activation_dtype,
-                kind="fp8-max",
-                max_int_value=self.max_int_value,
-            )
-
             if self.tensor_parallel_shards > 1:
+                # Calculate the scale and the reduce accross
+                # shards before quantizing
+                # TODO(csullivan): Replace with per shard scales
+                # like what is done with weights via tp.ShardScalar
+                local_scale = nn.op.quantize(
+                    x,
+                    quantize_dtype=self.activation_dtype,
+                    kind="fp8-max",
+                    compute_scale_only=True,
+                    max_int_value=self.max_int_value["x"],
+                )
                 local_scale = nn.op.ccl_allreduce(local_scale, op_type="max")
+                x = nn.op.quantize(
+                    x,
+                    quantize_dtype=self.activation_dtype,
+                    scale_tensor=local_scale,
+                    kind="fp8-max",
+                    max_int_value=self.max_int_value["x"],
+                )
+
+            else:
+                x, local_scale = nn.op.quantize(
+                    x,
+                    quantize_dtype=self.activation_dtype,
+                    kind="fp8-max",
+                    max_int_value=self.max_int_value["x"],
+                )
+
             local_scale = nn.op.maximum_inplace(local_scale, self.q_calibration_scale)
             # Calibration done in fp16 mma
             x = nn.op.astype(x, dtype="float16")
@@ -374,17 +449,18 @@ class MixtralExpertsFP8(
                 DataTypeCode.E5M2Float,
             ]:
                 dequant_func = self.config._dequantize_float8
-            else:
-                raise NotImplementedError()
-            w = nn.op.tensor_expr_op(  # pylint: disable=invalid-name
-                lambda weight, scale: dequant_func(  # pylint: disable=protected-access
-                    weight,
-                    scale,
-                    out_shape=(self.num_local_experts, self.out_features, self.in_features),
-                ),
-                name_hint="dequantize",
-                args=[self.q_weight, self.q_scale],
-            )
+                # The below computes w = cast(reinterpret_cast(self.q_weight, float8_e4m3), float16) * self.q_scale
+                w = nn.op.tensor_expr_op(  # pylint: disable=invalid-name
+                    lambda weight, scale: dequant_func(  # pylint: disable=protected-access
+                        weight,
+                        scale,
+                        out_shape=(self.num_local_experts, self.out_features, self.in_features),
+                    ),
+                    name_hint="dequantize_weight",
+                    args=[self.q_weight, self.q_scale],
+                )
+            elif self.weight_dtype == "float16":
+                w = self.q_weight
 
         elif self.runtime == "max":
             local_scale = self.q_calibration_scale
@@ -410,12 +486,12 @@ class MixtralExpertsFP8(
 
         batch_size, in_features = x.shape
         num_local_experts, out_features, _ = self.q_weight.shape
-        a_format = self.activation_dtype.split("_")[0]
-        w_format = self.weight_dtype.split("_")[0]
 
         if self.runtime == "max-calibration":
             func = "cutlass.group_gemm_scale_fp16_sm90"
         else:
+            a_format = self.activation_dtype.split("_")[0]
+            w_format = self.weight_dtype.split("_")[0]
             func = f"cutlass.group_gemm_{a_format}_{w_format}_fp16"
 
         if self.runtime == "cast":

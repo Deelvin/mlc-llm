@@ -189,7 +189,7 @@ QUANTIZATION: Dict[str, Quantization] = {
         kind="per-tensor-quant",
         activation_dtype="e4m3_float8",
         weight_dtype="e4m3_float8",
-        storage_dtype="uint32",
+        storage_dtype="uint8",
         model_dtype="float16",
         quantize_embedding=False,
     ),
@@ -264,6 +264,15 @@ QUANTIZATION: Dict[str, Quantization] = {
         quantize_dtype="e5m2_float8",
         storage_dtype="e5m2_float8",
         model_dtype="float16",
-    )
-
+    ),
+    "fp16_max_calibration": PerTensorQuantize(
+        name="fp16_max_calibration",
+        kind="per-tensor-quant",
+        activation_dtype="float16",
+        weight_dtype="float16",
+        storage_dtype="float16",
+        model_dtype="float16",
+        quantize_embedding=False,
+        no_scale=True,
+    ),
 }
