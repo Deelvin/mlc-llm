@@ -3,7 +3,6 @@ from enum import Enum
 from typing import List, Dict, Any, Callable
 
 import tvm
-from tvm import relax
 
 from slm.compiler_pass.smoothquant import get_scale_param_name, get_zp_param_name, SMOOTH_SUFFIX_NAME, QUANT_SUFFIX_NAME
 
@@ -17,8 +16,6 @@ def _accumulate_outlier_stat(stat, data, func: Callable = np.maximum):
     else:
         assert len(data) == len(stat)
         for idx in range(len(stat)):
-            # array = data[idx].numpy().astype(np.float32)
-            # stat[idx] = func(stat[idx], array)
             stat[idx] = func(stat[idx], data[idx].numpy())
     return stat
 
@@ -105,9 +102,10 @@ class QAlgo(Enum):
 
 
 def get_quantization_scheme(qscheme: str):
+
+    """Return pair: quantization scheme for activations, quantization scheme for weights.
     """
-    Return pair: quantization scheme for activations, quantization scheme for weights.
-    """
+
     if qscheme == "smq_q8i8f16_0":
         return QAlgo.PER_TENSOR_SYM, QAlgo.PER_TENSOR_SYM
     elif qscheme == "smq_q8i8f16_1":
@@ -130,8 +128,8 @@ def _calculate_quantization_params(
     stats: Dict[str, List[np.ndarray]],
     config: Dict[str, Any],
 ):
-    """
-    Equations for asymmetric quantization (PER_TENSOR_ASYM, PER_CHANNEL_ASYM):
+
+    """Equations for asymmetric quantization (PER_TENSOR_ASYM, PER_CHANNEL_ASYM):
       scale = (MAXf - MINf)/(MAXi - MINi)  (example for "int8": scale = (MAXf - MINf)/255)
       zp = -round(MINf/scale) + MINi       (example for "int8": zp = -round(MINf/scale) - 128)
 
@@ -140,6 +138,7 @@ def _calculate_quantization_params(
                                                     scale = (max(abs(MAXf), abs(MINf)))/127)
       zp = 0
     """
+
     if stats[func_name] is None:
         return {}
 
