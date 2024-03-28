@@ -233,7 +233,7 @@ def _create_smoothquant_func(
     if tensor_parallel_shards == 1 or shard_strategy is None:
         func_name = f"convert_param_{idx}"
         func_names.append((param_name, func_name))
-        _create_func(func_name, bb, param, factor_param, scale_param, zp_param, smq_params.get("quant_config").quantize_dtype)
+        _create_func(func_name, bb, param, factor_param, scale_param, zp_param, smq_params.get("quant_config").weight_dtype)
     else:
         if shard_strategy.dim == 0:
             factors = _duplicate_array(factor_param, tensor_parallel_shards)
@@ -247,7 +247,7 @@ def _create_smoothquant_func(
         for shard_idx in range(tensor_parallel_shards):
             func_name = f"convert_param_{idx}_shard_{shard_idx}"
             func_names.append((_sharded_param_name(param_name, shard_idx), func_name))
-            _create_func(func_name, bb, param, factors[shard_idx], scales[shard_idx], zps[shard_idx], dtype = smq_params.get("quant_config").quantize_dtype)
+            _create_func(func_name, bb, param, factors[shard_idx], scales[shard_idx], zps[shard_idx], dtype = smq_params.get("quant_config").weight_dtype)
     return func_names
 
 def gen_smoothquant(named_params: Dict[str, nn.Parameter], tensor_parallel_shards: int, args: Any):
@@ -255,7 +255,6 @@ def gen_smoothquant(named_params: Dict[str, nn.Parameter], tensor_parallel_shard
     model_config.tensor_parallel_shards = tensor_parallel_shards
     model = args.model.model(model_config)
     model.to(args.quantization.model_dtype)
-    pth = args.output
     param_to_smooth_factor = load_file(path=f"{args.statistics_path}/smooth_scale2param.json")
     param_to_scale = load_file(path=f"{args.statistics_path}/quantize_scale2param.json")
     import tvm
@@ -286,7 +285,7 @@ def gen_smoothquant(named_params: Dict[str, nn.Parameter], tensor_parallel_shard
             for sharded_param_name, func_name in func_names:
                 param_to_smoothquant_func[sharded_param_name] = func_name
 
-                named_params[sharded_param_name].to(args.quantization.quantize_dtype)  # Update dtype for checker
+                named_params[sharded_param_name].to(args.quantization.weight_dtype)  # Update dtype for checker
 
     assert not param_to_smooth_factor["prefill"], "detected not processed smoothing factors"
     assert not param_to_scale["prefill"], "detected not processed scales/zero_points"
