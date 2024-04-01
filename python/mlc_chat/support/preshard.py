@@ -236,12 +236,12 @@ def _create_smoothquant_func(
         _create_func(func_name, bb, param, factor_param, scale_param, zp_param, smq_params.get("quant_config").weight_dtype)
     else:
         if shard_strategy.dim == 0:
-            factors = _duplicate_array(factor_param, tensor_parallel_shards)
+            factors = _duplicate_array(factor_param, tensor_parallel_shards) if factor_param else None
             scales =  _split_array(scale_param, tensor_parallel_shards)
             zps =     _split_array(zp_param, tensor_parallel_shards)
         else:
             assert shard_strategy.dim == 1, f"Not supported shard.dim={shard_strategy.dim}"
-            factors = _split_array(factor_param, tensor_parallel_shards)
+            factors = _split_array(factor_param, tensor_parallel_shards) if factor_param else None
             scales =  _duplicate_array(scale_param, tensor_parallel_shards)
             zps =     _duplicate_array(zp_param, tensor_parallel_shards)
         for shard_idx in range(tensor_parallel_shards):
@@ -255,20 +255,33 @@ def gen_smoothquant(named_params: Dict[str, nn.Parameter], tensor_parallel_shard
     model_config.tensor_parallel_shards = tensor_parallel_shards
     model = args.model.model(model_config)
     model.to(args.quantization.model_dtype)
-    param_to_smooth_factor = load_file(path=f"{args.statistics_path}/smooth_scale2param.json")
+
+    # verification if smooth parameters exist to determine if smoothing was used
+    pth = args.output
+    smooth_scales_file = f"{args.statistics_path}/smooth_scale2param.json"
+    if os.path.isfile(smooth_scales_file):
+        param_to_smooth_factor = load_file(path=smooth_scales_file)
+    else:
+        param_to_smooth_factor = None
+
     param_to_scale = load_file(path=f"{args.statistics_path}/quantize_scale2param.json")
     import tvm
     from tvm.contrib import tvmjs
-    smoothing_factors_dict, _ = tvmjs.load_ndarray_cache(f"{args.statistics_path}/smooth/", tvm.cpu())
+    if param_to_smooth_factor:
+        smoothing_factors_dict, _ = tvmjs.load_ndarray_cache(f"{args.statistics_path}/smooth/", tvm.cpu())
+    else:
+        smoothing_factors_dict = None
     scales_dict, _ = tvmjs.load_ndarray_cache(f"{args.statistics_path}/quantize/", tvm.cpu())
 
     bb = relax.BlockBuilder()
     param_to_smoothquant_func = {}
     for idx, (name, param) in enumerate(model.state_dict().items()):
-        smooth_factor_names = param_to_smooth_factor["prefill"].pop(name, None)
+        if  param_to_smooth_factor:
+            smooth_factor_names = param_to_smooth_factor["prefill"].pop(name, None)
         scale_names = param_to_scale["prefill"].pop(name, None)
-        if smooth_factor_names is not None and scale_names is not None:
-            _, smooth_factor_name = smooth_factor_names
+        if (param_to_smooth_factor is None or smooth_factor_names is not None) and scale_names is not None:
+            if  param_to_smooth_factor:
+                _, smooth_factor_name = smooth_factor_names
             _, scale_name, _, zp_name = scale_names
             func_names = _create_smoothquant_func(
                 bb,
@@ -276,7 +289,7 @@ def gen_smoothquant(named_params: Dict[str, nn.Parameter], tensor_parallel_shard
                 name,
                 idx,
                 tensor_parallel_shards,
-                smoothing_factor=smoothing_factors_dict[smooth_factor_name],
+                smoothing_factor=smoothing_factors_dict[smooth_factor_name] if param_to_smooth_factor else None,
                 scale=scales_dict[scale_name],
                 zp=scales_dict[zp_name],
                 quant_config = args.quantization,
@@ -287,7 +300,6 @@ def gen_smoothquant(named_params: Dict[str, nn.Parameter], tensor_parallel_shard
 
                 named_params[sharded_param_name].to(args.quantization.weight_dtype)  # Update dtype for checker
 
-    assert not param_to_smooth_factor["prefill"], "detected not processed smoothing factors"
     assert not param_to_scale["prefill"], "detected not processed scales/zero_points"
 
     mod = bb.finalize()
