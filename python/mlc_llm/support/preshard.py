@@ -1,5 +1,5 @@
 """Functions for pre-sharding weights"""
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List
 
 from tvm import IRModule
 from tvm import dlight as dl
