@@ -97,7 +97,8 @@ class PreprocessSmoothQuantize:  # pylint: disable=too-many-instance-attributes
         self.results_dict = {}
         self.abs_max = {}
         self.min_max_smoothed = {}
-        self.a_stat_names = None
+        self.smooth_params = None
+        self.param_to_smooth_factor = None
         return
 
     def preprocess_weight(
@@ -133,14 +134,14 @@ class PreprocessSmoothQuantize:  # pylint: disable=too-many-instance-attributes
             data = self.funcs_cache[weight.shape][func_name](weight)
             self.abs_max[name] = data.numpy()
         elif self.kind == "quantize-preprocess":
-            assert self.statistics_output
             func_name = "max_smoothed_func"
             if weight.shape not in self.funcs_cache:
                 bb = relax.BlockBuilder()
                 _gen_max_smoothed_func(bb, weight.shape, self.model_dtype, func_name)
                 mod = bb.finalize()
                 self.conversion_funcs_cache[weight.shape] = _compile_quantize_func(mod, target=Target.from_device(weight.device), device=weight.device)
-            scale = self.a_stat_names[name]
+            scale_names = self.param_to_smooth_factor[name]
+            scale = self.smooth_params[scale_names[1]].numpy()
             scale_dev = tvm.nd.array(scale, device=weight.device)
             data = self.conversion_funcs_cache[weight.shape][func_name](weight, scale_dev)
             self.min_max_smoothed[name] = [data[0].numpy(), data[1].numpy()]
@@ -207,7 +208,13 @@ class PreprocessSmoothQuantize:  # pylint: disable=too-many-instance-attributes
 
                 return self.visit(name, node)
         if self.kind == "quantize-preprocess":
-            self.a_stat_names = np.load(f"{self.statistics_output}/activations_abs_max.npy", allow_pickle=True).item()
+            assert self.statistics_output
+            self.smooth_params = tvmjs.load_ndarray_cache(
+                os.path.join(f"{self.statistics_output}", "smooth"), tvm.cpu(0)
+            )[0]
+            self.param_to_smooth_factor = load_file(
+                path=f"{self.statistics_output}/smooth_scale2param.json"
+            )["prefill"]
         self.funcs_cache = {}
         self.results_dict = {}
         model.to(dtype=self.model_dtype)
