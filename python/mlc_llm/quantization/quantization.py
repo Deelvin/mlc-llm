@@ -7,6 +7,7 @@ from .group_quantization import GroupQuantize
 from .no_quantization import NoQuantize
 from .per_tensor_quantization import PerTensorQuantize
 from .smooth_quantization import SmoothQuantize
+from .preprocess_smooth_quantization import PreprocessSmoothQuantize
 
 Quantization = Any
 """Quantization is an object that represents an quantization algorithm. It is required to
@@ -139,33 +140,6 @@ QUANTIZATION: Dict[str, Quantization] = {
         quantize_embedding=False,
         quantize_linear=False,
     ),
-    "smq_q8i8f16_0": SmoothQuantize(
-        name="smq_q8i8f16_0",
-        kind="smoothquant",
-        activation_dtype="int8",
-        weight_dtype="int8",
-        zero_point_dtype="int8",
-        accumulator_dtype="int32",
-        model_dtype="float16",
-    ),
-    "smq_q8i8f16_1": SmoothQuantize(
-        name="smq_q8i8f16_1",
-        kind="smoothquant",
-        activation_dtype="int8",
-        weight_dtype="int8",
-        zero_point_dtype="int8",
-        accumulator_dtype="int32",
-        model_dtype="float16",
-    ),
-    "smq_q8i8f16_2": SmoothQuantize(
-        name="smq_q8i8f16_2",
-        kind="smoothquant",
-        activation_dtype="int8",
-        weight_dtype="int8",
-        zero_point_dtype="int8",
-        accumulator_dtype="int32",
-        model_dtype="float16",
-    ),
     "smq_e4m3_float8_0": SmoothQuantize(
         name="smq_e4m3_float8_0",
         kind="smoothquant",
@@ -258,59 +232,29 @@ QUANTIZATION: Dict[str, Quantization] = {
         accumulator_dtype="int32",
         model_dtype="float16",
     ),
-    "smq_e4m3_float8_0": SmoothQuantize(
-        name="smq_e4m3_float8_0",
-        kind="smoothquant",
-        activation_dtype="e4m3_float8",
-        weight_dtype="e4m3_float8",
-        zero_point_dtype="float16",
-        accumulator_dtype="float32",
+    # preprocessing steps to speedup smoothquant calibration
+    "q0f16_smooth_smooth": PreprocessSmoothQuantize(
+        name="q0f16_preprocess",
+        kind="smooth-preprocess",
         model_dtype="float16",
+        statistics_output="",
     ),
-    "smq_e4m3_float8_1": SmoothQuantize(
-        name="smq_e4m3_float8_1",
-        kind="smoothquant",
-        activation_dtype="e4m3_float8",
-        weight_dtype="e4m3_float8",
-        zero_point_dtype="float16",
-        accumulator_dtype="float32",
-        model_dtype="float16",
+    "q0f32_smooth_smooth": PreprocessSmoothQuantize(
+        name="q0f32_preprocess",
+        kind="smooth-preprocess",
+        model_dtype="float32",
+        statistics_output="",
     ),
-    "smq_e4m3_float8_2": SmoothQuantize(
-        name="smq_e4m3_float8_2",
-        kind="smoothquant",
-        activation_dtype="e4m3_float8",
-        weight_dtype="e4m3_float8",
-        zero_point_dtype="float16",
-        accumulator_dtype="float32",
+    "q0f16_smooth_quantize": PreprocessSmoothQuantize(
+        name="q0f16_preprocess",
+        kind="quantize-preprocess",
         model_dtype="float16",
+        statistics_output="",
     ),
-    "smq_e5m2_float8_0": SmoothQuantize(
-        name="smq_e5m2_float8_0",
-        kind="smoothquant",
-        activation_dtype="e5m2_float8",
-        weight_dtype="e5m2_float8",
-        zero_point_dtype="float16",
-        accumulator_dtype="float32",
-        model_dtype="float16",
+    "q0f32_smooth_quantize": PreprocessSmoothQuantize(
+        name="q0f32_preprocess",
+        kind="quantize-preprocess",
+        model_dtype="float32",
+        statistics_output="",
     ),
-    "smq_e5m2_float8_1": SmoothQuantize(
-        name="smq_e5m2_float8_1",
-        kind="smoothquant",
-        activation_dtype="e5m2_float8",
-        weight_dtype="e5m2_float8",
-        zero_point_dtype="float16",
-        accumulator_dtype="float32",
-        model_dtype="float16",
-    ),
-    "smq_e5m2_float8_2": SmoothQuantize(
-        name="smq_e5m2_float8_2",
-        kind="smoothquant",
-        activation_dtype="e5m2_float8",
-        weight_dtype="e5m2_float8",
-        zero_point_dtype="float16",
-        accumulator_dtype="float32",
-        model_dtype="float16",
-    )
-
 }
