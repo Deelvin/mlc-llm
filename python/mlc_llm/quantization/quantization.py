@@ -237,24 +237,24 @@ QUANTIZATION: Dict[str, Quantization] = {
         name="q0f16_preprocess",
         kind="smooth-preprocess",
         model_dtype="float16",
-        statistics_output="",
+        dump_calibration="",
     ),
     "q0f32_smooth_smooth": PreprocessSmoothQuantize(
         name="q0f32_preprocess",
         kind="smooth-preprocess",
         model_dtype="float32",
-        statistics_output="",
+        dump_calibration="",
     ),
     "q0f16_smooth_quantize": PreprocessSmoothQuantize(
         name="q0f16_preprocess",
         kind="quantize-preprocess",
         model_dtype="float16",
-        statistics_output="",
+        dump_calibration="",
     ),
     "q0f32_smooth_quantize": PreprocessSmoothQuantize(
         name="q0f32_preprocess",
         kind="quantize-preprocess",
         model_dtype="float32",
-        statistics_output="",
+        dump_calibration="",
     ),
 }

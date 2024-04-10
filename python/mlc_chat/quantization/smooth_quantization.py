@@ -81,7 +81,7 @@ def shard_smoothquant_params(tensor_parallel_shards, args):
     model = args.model.model(model_config)
     model.to(args.quantization.model_dtype)
 
-    pth = args.statistics_path
+    pth = args.dump_calibration
     param_to_smooth_factor = load_file(path=os.path.join(pth, "smooth_scale2param.json"))
     param_to_scale = load_file(path=os.path.join(pth, "quantize_scale2param.json"))
     import tvm
@@ -184,20 +184,20 @@ def gen_smoothquant(named_params: Dict[str, nn.Parameter], tensor_parallel_shard
 
     # verification if smooth parameters exist to determine if smoothing was used
     pth = args.output
-    smooth_scales_file = f"{args.statistics_path}/smooth_scale2param.json"
+    smooth_scales_file = f"{args.dump_calibration}/smooth_scale2param.json"
     if os.path.isfile(smooth_scales_file):
         param_to_smooth_factor = load_file(path=smooth_scales_file)
     else:
         param_to_smooth_factor = None
 
-    param_to_scale = load_file(path=f"{args.statistics_path}/quantize_scale2param.json")
+    param_to_scale = load_file(path=f"{args.dump_calibration}/quantize_scale2param.json")
     import tvm
     from tvm.contrib import tvmjs
     if param_to_smooth_factor:
-        smoothing_factors_dict, _ = tvmjs.load_ndarray_cache(f"{args.statistics_path}/smooth/", tvm.cpu())
+        smoothing_factors_dict, _ = tvmjs.load_ndarray_cache(f"{args.dump_calibration}/smooth/", tvm.cpu())
     else:
         smoothing_factors_dict = None
-    scales_dict, _ = tvmjs.load_ndarray_cache(f"{args.statistics_path}/quantize/", tvm.cpu())
+    scales_dict, _ = tvmjs.load_ndarray_cache(f"{args.dump_calibration}/quantize/", tvm.cpu())
 
     bb = relax.BlockBuilder()
     param_to_smoothquant_func = {}

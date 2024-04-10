@@ -84,17 +84,24 @@ def _gen_max_smoothed_func(bb, shape, dtype, func_name):
     return func_name
 
 
+def shape_to_name(shp):
+    out = ""
+    for i in range(len(shp) -1):
+        out += f"{shp[i]}x"
+    out += f"{shp[-1]}"
+    return out
+
+
 @dataclass
 class PreprocessSmoothQuantize:  # pylint: disable=too-many-instance-attributes
     name: str
     kind: str
     model_dtype: Literal["float16"]
-    statistics_output: Literal[""]
+    dump_calibration: Literal[""]
 
     def __post_init__(self):
         self.funcs_cache = {}
         self.conversion_funcs_cache = {}
-        self.results_dict = {}
         self.abs_max = {}
         self.min_max_smoothed = {}
         self.smooth_params = None
@@ -124,28 +131,42 @@ class PreprocessSmoothQuantize:  # pylint: disable=too-many-instance-attributes
         ret: List[NDArray]
             The list of group quantized weights.
         """
+        nm_shape = shape_to_name(weight.shape)
         if self.kind == "smooth-preprocess":
             func_name = "abs_max_calc"
-            if weight.shape not in self.funcs_cache:
+            if not nm_shape in self.funcs_cache.keys():
                 bb = relax.BlockBuilder()
                 _gen_max_stat_func(bb, weight.shape, self.model_dtype, func_name)
                 mod = bb.finalize()
-                self.funcs_cache[weight.shape] = _compile_quantize_func(mod, target=Target.from_device(weight.device), device=weight.device)
-            data = self.funcs_cache[weight.shape][func_name](weight)
+                self.funcs_cache[nm_shape] = _compile_quantize_func(
+                    mod, target=Target.from_device(weight.device), device=weight.device
+                )[func_name]
+            data = self.funcs_cache[nm_shape](weight)
             self.abs_max[name] = data.numpy()
+            del data
         elif self.kind == "quantize-preprocess":
             func_name = "max_smoothed_func"
-            if weight.shape not in self.funcs_cache:
+            if nm_shape not in self.conversion_funcs_cache.keys():
                 bb = relax.BlockBuilder()
                 _gen_max_smoothed_func(bb, weight.shape, self.model_dtype, func_name)
                 mod = bb.finalize()
-                self.conversion_funcs_cache[weight.shape] = _compile_quantize_func(mod, target=Target.from_device(weight.device), device=weight.device)
+                self.conversion_funcs_cache[nm_shape] = _compile_quantize_func(
+                    mod, target=Target.from_device(weight.device), device=weight.device
+                )[func_name]
             scale_names = self.param_to_smooth_factor[name]
             scale = self.smooth_params[scale_names[1]].numpy()
             scale_dev = tvm.nd.array(scale, device=weight.device)
-            data = self.conversion_funcs_cache[weight.shape][func_name](weight, scale_dev)
+            data = self.conversion_funcs_cache[nm_shape](weight, scale_dev)
             self.min_max_smoothed[name] = [data[0].numpy(), data[1].numpy()]
+            del data
+            del scale_dev
         return [weight]
+
+    def clear_data(self):
+        self.funcs_cache = {}
+        self.conversion_funcs_cache = {}
+        self.abs_max = {}
+        self.min_max_smoothed = {}
 
     def quantize_model(
         self,
@@ -208,16 +229,16 @@ class PreprocessSmoothQuantize:  # pylint: disable=too-many-instance-attributes
 
                 return self.visit(name, node)
         if self.kind == "quantize-preprocess":
-            assert self.statistics_output
+            assert self.dump_calibration
             self.smooth_params = tvmjs.load_ndarray_cache(
-                os.path.join(f"{self.statistics_output}", "smooth"), tvm.cpu(0)
+                os.path.join(f"{self.dump_calibration}", "smooth"), tvm.cpu(0)
             )[0]
             self.param_to_smooth_factor = load_file(
-                path=f"{self.statistics_output}/smooth_scale2param.json"
+                path=f"{self.dump_calibration}/smooth_scale2param.json"
             )["prefill"]
-        self.funcs_cache = {}
-        self.results_dict = {}
+        self.clear_data()
         model.to(dtype=self.model_dtype)
         mutator = _Mutator(self, quant_map)
         model = mutator.visit(name_prefix, model)
+
         return model
