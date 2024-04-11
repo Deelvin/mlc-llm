@@ -1,5 +1,5 @@
 """Functions for pre-sharding weights"""
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Sequence, Tuple
 
 from tvm import IRModule
 from tvm import dlight as dl
@@ -7,6 +7,7 @@ from tvm import relax
 from tvm.relax.frontend import nn
 from tvm.runtime import Device, NDArray
 from tvm.target import Target
+from mlc_llm.support import logging
 from mlc_llm.support import tensor_parallel as tp
 
 logger = logging.getLogger("preshard")
